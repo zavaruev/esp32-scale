@@ -393,14 +393,31 @@ static void wifi_start(void)
      * Measured on this IDF version: the setter takes dBm and the getter returns
      * dBm too - asking for 8 gave back 8. Earlier, with the limit only in
      * wifi_country_t before start, the getter returned 80, which is not a
-     * physically meaningful transmit power and meant nothing was applied. */
-    esp_err_t perr = esp_wifi_set_max_tx_power(8);
+     * physically meaningful transmit power and meant nothing was applied.
+     *
+     * The limit was 8 dBm for a long time, and that turned out to cost the web
+     * interface its usability. The reason=2 loop was fixed, but 8 dBm is a very
+     * small signal to send into a link measured at -68 dBm with 18 access points
+     * in range. Measured 2026-10-09, same protocol, page fetch with gzip, 10
+     * attempts each:
+     *
+     *     8 dBm   average 16.31 s   worst 30.00 s (the timeout)   best 0.68 s
+     *    17 dBm   average  1.21 s   worst  1.98 s                 best 0.39 s
+     *
+     * Thirteen times faster on average, and the worst case goes from sitting on
+     * the timeout to under two seconds. A five minute soak at 17 dBm produced
+     * zero disconnects and zero authentication failures, which is the symptom
+     * 8 dBm was introduced to prevent - so that limit was too conservative. The
+     * failure it fixed happened at unthrottled power, not at 17.
+     *
+     * The console command T <dBm> changes this at runtime. */
+    esp_err_t perr = esp_wifi_set_max_tx_power(17);
     int8_t tx_dbm = 0;
     esp_err_t gerr = esp_wifi_get_max_tx_power(&tx_dbm);
-    ESP_LOGW(TAG, "TX power set 8 dBm -> %s, reads back %d dBm",
+    ESP_LOGW(TAG, "TX power set 17 dBm -> %s, reads back %d dBm",
              esp_err_to_name(perr), (int)tx_dbm);
-    if (gerr != ESP_OK || tx_dbm != 8) {
-        ESP_LOGE(TAG, "TX power limit NOT in force (wanted 8, got %d)",
+    if (gerr != ESP_OK || tx_dbm != 17) {
+        ESP_LOGE(TAG, "TX power limit NOT in force (wanted 17, got %d)",
                  (int)tx_dbm);
     }
 
