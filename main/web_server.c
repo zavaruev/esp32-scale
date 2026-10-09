@@ -187,21 +187,32 @@ void wifi_set_password(const char *pw)
     wifi_set_auth_mode((int)auth_mode);
 }
 
-/* Access-point fallback.
+/* Access-point fallback. DISABLED by explicit request, 2026-10-09.
  *
- * The STA link to home4 is not completing (reason=2 AUTH_EXPIRE during the
- * 4-way handshake, while the AP is plainly visible as WPA2-PSK at -59 dBm).
- * Rather than leave the web interface unusable until that is resolved, the
- * device brings up its own AP so the UI can be exercised on the bench.
- * The AP is deliberately open: this is a bench device on a workbench, and an
- * open AP is easier to join than one whose password also has to be explained.
+ * What it did: if the station had not connected 15 s after boot, the device
+ * brought up its own open AP "ESP32-Scale" at 192.168.4.1 alongside the
+ * station, and a retry task then ran every 5 minutes forever.
+ *
+ * Why it is off: the device is used over WiFi, and the user does not want it
+ * changing radio mode on its own. It was also a plausible contributor to the
+ * intermittent "interface does not open" reports - the retry task lives for the
+ * whole session and calls esp_wifi_set_mode and esp_wifi_connect, which is the
+ * kind of thing that drops an association that was working.
+ *
+ * The code below is kept intact rather than deleted so it can be switched back
+ * on in one place if the station link ever becomes unusable again. Set this to
+ * 1 to restore the old behaviour.
  */
+#define AP_FALLBACK_ENABLED  0
+
 #define AP_SSID     "ESP32-Scale"
 #define AP_CHANNEL  1
 #define AP_FALLBACK_SECONDS 15
 
 static bool ap_mode = false;
+#if AP_FALLBACK_ENABLED
 static bool fallback_done = false;
+#endif
 
 /* ------------------------------------------------------------------ WiFi */
 
@@ -318,7 +329,6 @@ void wifi_set_auth_mode(int m)
     esp_wifi_connect();
 }
 
-static void sta_retry_task(void *arg);
 
 static void wifi_start(void)
 {
@@ -663,6 +673,7 @@ int wifi_get_auth_mode(void)
  * From here the station keeps retrying in the background while the AP stays up,
  * so the device is reachable at 192.168.4.1 no matter what the router does.
  */
+#if AP_FALLBACK_ENABLED
 static void ap_start(void)
 {
     if (ap_mode) {
@@ -703,6 +714,7 @@ static void ap_start(void)
      * from home4, which reads as "the web interface is broken". */
     xTaskCreate(sta_retry_task, "sta_retry", 3072, NULL, 3, NULL);
 }
+#endif /* AP_FALLBACK_ENABLED */
 
 /* Nudges the station to try home4 again. No driver restart, no mode change -
  * under APSTA a plain reconnect request is all that is needed. */
@@ -737,6 +749,7 @@ void wifi_leave_ap_mode(void)
  * mode, and does so every 5 minutes instead of every 30 seconds. Once the station
  * is in STA mode the disconnect handler reconnects on its own with backoff, and
  * no driver restart is involved at all. */
+#if AP_FALLBACK_ENABLED
 static void sta_retry_task(void *arg)
 {
     (void)arg;
@@ -755,6 +768,7 @@ static void sta_retry_task(void *arg)
         wifi_leave_ap_mode();
     }
 }
+#endif /* AP_FALLBACK_ENABLED */
 
 /* Suspends or resumes the WiFi radio without tearing down netif or the event
  * loop. Diagnostic only: the raw noise floor must be compared with the radio
@@ -799,9 +813,13 @@ void wifi_suspend(bool off)
     ESP_LOGW(TAG, "WiFi radio resumed");
 }
 
-/* Called once the STA attempt has had its chance. */
+/* Called once the STA attempt has had its chance.
+ *
+ * Disabled by explicit request; see AP_FALLBACK_ENABLED above. The function is
+ * kept so the call site needs no change and re-enabling is one constant. */
 void wifi_start_ap_fallback(void)
 {
+#if AP_FALLBACK_ENABLED
     if (wifi_suspended) {
         return;
     }
@@ -810,6 +828,11 @@ void wifi_start_ap_fallback(void)
         WIFI_CONNECTED_BIT) {
         ap_start();
     }
+#else
+    /* Nothing to wait for and nothing to start. The station is the only radio
+     * mode this device uses. */
+    (void)0;
+#endif
 }
 
 /* Self-test: fetch our own page over loopback and report what came back.
