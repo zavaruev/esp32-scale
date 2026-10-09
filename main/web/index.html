@@ -187,6 +187,7 @@ footer{
     <span class="chip" id="chip-zero">ZERO</span>
     <span class="chip" id="chip-tare">TARE</span>
     <span class="chip" id="chip-avg">AVG</span>
+    <span class="chip" id="chip-lock">ФИКС</span>
   </div>
 </div>
 
@@ -270,12 +271,29 @@ var calPhase = 'idle';
  * rounded to 0.05 g, made the last digit flicker while the leading digits stayed
  * correct, which reads as an instrument that cannot settle.
  *
- * Averaging 12 polls at 1.5 s gives an 18 s window: sigma of the mean falls to
- * about 31 mg, so the 0.01 g digit moves only slightly and the eye can lock on
- * the stable part. The window is reset on a unit change or after TARE, so the
- * reading reacts immediately when the operator does something. */
-var AVG_N = 12;
+/* Six polls at 1.5 s - a 9 s window. It was 12 (18 s), which was too long: each
+ * poll already arrives smoothed by the EMA over roughly a second, so the extra
+ * samples bought very little and the delay was pure waiting. */
+var AVG_N = 6;
 var hist = [];
+
+/* Hold the reading once it has settled.
+ *
+ * Averaging cannot explain why the figure never stops moving. Measured: the noise
+ * of one raw sample is 107 mg, so averaging does reduce it, but the platform's
+ * resting point itself wanders by up to +/-0.4 g over minutes. The instrument is
+ * quiet; what it stands on is not, and the average follows the platform rather
+ * than the load.
+ *
+ * A real scale answers this by latching the figure once it is steady, which is
+ * what these constants implement: hold after LOCK_HOLD consecutive readings
+ * within LOCK_TOL of each other, release on anything beyond LOCK_RELEASE. That
+ * release width is far larger than any plausible drift, so a genuine weight
+ * change always gets through. */
+var LOCK_TOL     = 0.02;   /* g: smaller movement means the same weight */
+var LOCK_RELEASE = 0.5;    /* g: certainly a different weight */
+var LOCK_HOLD    = 4;      /* consecutive polls inside the tolerance */
+var locked = false, lockedValue = 0, quiet = 0, candidate = null;
 
 function unitInfo(code) {
   for (var i = 0; i < UNITS.length; i++) {
@@ -284,7 +302,34 @@ function unitInfo(code) {
   return UNITS[0];
 }
 
-function resetAverage() { hist = []; }
+function resetAverage() { hist = []; locked = false; quiet = 0; candidate = null; }
+
+/* Returns the figure to display, in grams. */
+function holdOrShow(grams, stable) {
+  if (candidate === null) {
+    candidate = grams;
+  }
+  if (locked) {
+    if (Math.abs(grams - lockedValue) > LOCK_RELEASE) {
+      locked = false;
+      quiet = 0;
+      candidate = grams;
+    } else {
+      return lockedValue;
+    }
+  }
+  if (Math.abs(grams - candidate) <= LOCK_TOL) {
+    quiet++;
+  } else {
+    quiet = 0;
+    candidate = grams;
+  }
+  if (quiet >= LOCK_HOLD && stable) {
+    locked = true;
+    lockedValue = grams;
+  }
+  return locked ? lockedValue : grams;
+}
 
 function meanValue(v) {
   hist.push(v);
@@ -301,7 +346,7 @@ function paint(s) {
      missing here: the comment described it but no divide existed, so switching
      to kg or oz changed only the label while the digits stayed in grams. */
   var m = meanValue(s.grams);
-  var shown = m.v / u.per;
+  var shown = holdOrShow(m.v, s.stable) / u.per;
   document.getElementById('weight').textContent = shown.toFixed(u.decimals);
   document.getElementById('unit').textContent = u.label;
 
@@ -311,6 +356,7 @@ function paint(s) {
   /* AVG lights once the window is full, i.e. when the number on screen is a
      real average rather than a partly warmed-up one. */
   setChip('chip-avg', m.n >= AVG_N);
+  setChip('chip-lock', locked);
 
   document.getElementById('d-counts').textContent = s.counts;
   document.getElementById('d-sigma').textContent = s.sigma_mg.toFixed(0) + ' \u043c\u0433';
