@@ -136,7 +136,24 @@ void scale_filter_update(scale_filter_t *f, int32_t raw, int64_t now_us,
      * Rate based rather than a fixed fraction: a fixed fraction either tracks too
      * slowly to beat the drift or too aggressively to preserve real weights. */
     if (f->azt_enabled) {
-        if (fabs(f->ema - f->azt_anchor) <= AZT_WINDOW) {
+        double diff = f->ema - f->azt_anchor;
+
+        if (fabs(diff) <= DEADBAND) {
+            /* Exactly zero while inside the deadband.
+             *
+             * The old code clamped the anchor to AZT_WINDOW when it overtook the
+             * reading, and AZT_WINDOW is the SAME constant as DEADBAND. So the
+             * anchor was parked precisely where the zero/non-zero decision is
+             * taken: 40.000000 counts reads as zero, 40.000001 reads as 0.09 g.
+             * Measured consequence - an empty platform sitting permanently at
+             * -0.10 g, with the ZERO indicator off and nothing on the scale.
+             *
+             * Snapping to the reading inside the deadband removes the stuck
+             * state entirely: the zero is exact, and a real load still moves the
+             * reading far outside the deadband so tracking resumes normally. */
+            f->azt_anchor = f->ema;
+            f->azt_since_us = now_us;
+        } else if (fabs(diff) <= AZT_WINDOW) {
             if (f->azt_since_us == 0) {
                 f->azt_since_us = now_us;
             } else if (now_us - f->azt_since_us >= AZT_HOLD_US) {

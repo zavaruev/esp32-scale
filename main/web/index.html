@@ -346,6 +346,15 @@ function paint(s) {
      missing here: the comment described it but no divide existed, so switching
      to kg or oz changed only the label while the digits stayed in grams. */
   var m = meanValue(s.grams);
+  /* A held reading must yield to the device. The firmware snaps the anchor to
+     the reading whenever it is inside the deadband, so the authoritative value is
+     exactly zero; a display frozen on the last non-zero figure would then show
+     something the instrument does not believe. */
+  if (s.zero && locked) {
+    locked = false;
+    quiet = 0;
+    candidate = null;
+  }
   var shown = holdOrShow(m.v, s.stable) / u.per;
   document.getElementById('weight').textContent = shown.toFixed(u.decimals);
   document.getElementById('unit').textContent = u.label;
