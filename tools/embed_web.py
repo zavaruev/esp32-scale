@@ -9,6 +9,7 @@ Run automatically by the build; check in the generated header so a fresh clone
 builds without Python.
 """
 
+import gzip
 import os
 import sys
 
@@ -16,6 +17,20 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 SRC = os.path.join(ROOT, "main", "web", "index.html")
 OUT = os.path.join(ROOT, "main", "index_html.h")
+
+
+def _byte_array(data, name):
+    """Render bytes as a C array, 16 per line."""
+    lines = ["static const char %s[] = {" % name]
+    for i, b in enumerate(data):
+        if i % 16 == 0:
+            lines.append("    ")
+        lines.append("0x%02x," % b)
+        if i % 16 == 15:
+            lines.append("")
+    lines.append("    0x00")
+    lines.append("};")
+    return lines
 
 
 def main():
@@ -27,30 +42,47 @@ def main():
     raw_len = len(html.encode("utf-8"))
     data = _minify_html(html).encode("utf-8")
 
+    # Compressed at build time, not on the device.
+    #
+    # Measured 2026-10-09: the link to the access point carries 50% loss at
+    # 347 ms average RTT, which works out to roughly 400 bytes per second. The
+    # 13 667 byte page needs about 35 s at that rate and in practice never
+    # arrived at all. gzip takes the same page to 4 492 bytes - one third of the
+    # traffic - because HTML of this shape is mostly repeated markup and CSS.
+    #
+    # The device has no business spending CPU on this: compressing once at build
+    # time and serving a static blob is free at runtime, and every browser sends
+    # Accept-Encoding: gzip anyway. The raw array stays in the header as the
+    # fallback for clients that do not.
+    packed = gzip.compress(data, 9)
+
     out = [
         "/* Generated from main/web/index.html by tools/embed_web.py.",
         " * Do not edit by hand; edit the HTML and rebuild. */",
         "#ifndef INDEX_HTML_H",
         "#define INDEX_HTML_H",
         "",
+        "/* raw, for clients that do not accept gzip */",
         "#define INDEX_HTML_LEN %d" % len(data),
         "",
-        "static const char INDEX_HTML[] = {",
     ]
-    for i, b in enumerate(data):
-        if i % 16 == 0:
-            out.append("    ")
-        out.append("0x%02x," % b)
-        if i % 16 == 15:
-            out.append("")
-    out.append("    0x00")
-    out.append("};")
-    out.append("")
-    out.append("#endif /* INDEX_HTML_H */")
-    out.append("")
+    out += _byte_array(data, "INDEX_HTML")
+    out += [
+        "",
+        "/* gzip of the same bytes, served with Content-Encoding: gzip */",
+        "#define INDEX_HTML_GZ_LEN %d" % len(packed),
+        "",
+    ]
+    out += _byte_array(packed, "INDEX_HTML_GZ")
+    out += [
+        "",
+        "#endif /* INDEX_HTML_H */",
+        "",
+    ]
 
     text = "\n".join(out)
-    print("main/web/index.html %d B -> embedded %d B" % (raw_len, len(data)))
+    print("main/web/index.html %d B -> embedded %d B, gzip %d B (%.0f%%)"
+          % (raw_len, len(data), len(packed), 100.0 * len(packed) / len(data)))
     existing = None
     if os.path.exists(OUT):
         with open(OUT, "r") as fh:

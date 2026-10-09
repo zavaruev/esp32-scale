@@ -586,10 +586,40 @@ static esp_err_t root_handler(httpd_req_t *req)
      * stalled after one 1440-byte TCP segment, which is the signature of a send
      * buffer that never drains - lwIP's TCP/IP thread was starved on Core 0 by
      * the measurement task and stopped processing incoming acknowledgements. */
+    const char *body = INDEX_HTML;
+    size_t body_len = INDEX_HTML_LEN;
+
+    /* Serve the gzipped build when the client asks for it.
+     *
+     * Measured 2026-10-09, the real reason the page "does not open": the link to
+     * the access point loses half its packets at 347 ms average round trip, which
+     * is about 400 bytes per second of goodput. The 13 666 byte page needs about
+     * 35 s at that rate and in practice never arrived - while the 221 byte API
+     * response came back in 0.09 s. The device's own log said it had handed all
+     * 13 666 bytes to the network stack in 3 ms, so nothing on this device was
+     * slow; there were simply far too many bytes to push over a bad link.
+     *
+     * gzip takes the same page to 4 490 bytes, one third of the traffic, for zero
+     * runtime cost: it is compressed once by tools/embed_web.py at build time.
+     * Every browser sends Accept-Encoding: gzip. This IDF version has no
+     * req->accept_encoding field, so the header is read by hand.
+     *
+     * This shortens the transfer, it does not repair the link. At 400 bytes per
+     * second even 4 490 bytes takes about 11 s, so the radio path still needs
+     * attention - see AGENTS.md. */
+    char enc[48] = {0};
+    if (httpd_req_get_hdr_value_str(req, "Accept-Encoding", enc, sizeof(enc)) == ESP_OK &&
+        strstr(enc, "gzip")) {
+        body = INDEX_HTML_GZ;
+        body_len = INDEX_HTML_GZ_LEN;
+        httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    }
+
     int64_t t0 = esp_timer_get_time();
-    esp_err_t err = httpd_resp_send(req, INDEX_HTML, INDEX_HTML_LEN);
-    ESP_LOGW(TAG, "page: %d bytes, err=%s, took %lld ms",
-             INDEX_HTML_LEN, esp_err_to_name(err),
+    esp_err_t err = httpd_resp_send(req, body, body_len);
+    ESP_LOGW(TAG, "page: %d bytes%s, err=%s, took %lld ms",
+             (int)body_len, body == INDEX_HTML_GZ ? " gzip" : " raw",
+             esp_err_to_name(err),
              (long long)((esp_timer_get_time() - t0) / 1000));
     return err;
 }
