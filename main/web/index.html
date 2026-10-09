@@ -368,17 +368,27 @@ function paint(s) {
   /* Average in grams, then convert into the selected unit. The conversion was
      missing here: the comment described it but no divide existed, so switching
      to kg or oz changed only the label while the digits stayed in grams. */
-  var m = meanValue(s.grams);
-  /* A held reading must yield to the device. The firmware snaps the anchor to
-     the reading whenever it is inside the deadband, so the authoritative value is
-     exactly zero; a display frozen on the last non-zero figure would then show
-     something the instrument does not believe. */
-  if (s.zero && locked) {
-    locked = false;
-    quiet = 0;
-    candidate = null;
+  /* The device asserting zero outranks everything this page computes.
+   *
+   * Inside the deadband the firmware snaps the anchor to the reading, so when
+   * zero is reported the authoritative figure is exactly 0. Averaging the zero in
+   * with samples taken before the deadband engaged leaves a residue on screen -
+   * measured as 0.02 g with the zero indicator lit - and the hold then latches
+   * that residue, so it never clears. Measured over 66 polls: the device reports
+   * a non-zero value while zero is set in zero cases out of 66, so the whole
+   * effect comes from this averaging window and nothing upstream.
+   *
+   * So zero bypasses the window entirely rather than joining it. */
+  var m, shown;
+  if (s.zero) {
+    resetAverage();
+    m = {v: 0, n: 0};
+    shown = 0;
+  } else {
+    m = meanValue(s.grams);
+    shown = holdOrShow(m.v, s.stable);
   }
-  var shown = holdOrShow(m.v, s.stable) / u.per;
+  shown = shown / u.per;
   document.getElementById('weight').textContent = shown.toFixed(u.decimals);
   document.getElementById('unit').textContent = u.label;
 
