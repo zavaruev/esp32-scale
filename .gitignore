@@ -1,0 +1,35 @@
+# --- ESP-IDF build artefacts -------------------------------------------------
+/build/
+# sdkconfig is per-developer and will contain WiFi credentials once set through
+# menuconfig. Project-wide, secret-free defaults belong in sdkconfig.defaults,
+# which IS tracked.
+/sdkconfig
+/sdkconfig.old
+/managed_components/
+/dependencies.lock
+
+# Compiled output (normally already covered by /build/, listed for safety)
+*.elf
+*.bin
+*.map
+*.hex
+
+# Python bytecode - regenerate with a single import
+__pycache__/
+*.py[cod]
+
+# Editor / tooling noise
+.vscode/
+.idea/
+*.swp
+*~
+
+# Credentials - never commit these
+/secrets.yaml
+
+# Scratch artefacts of browser-based UI checks
+/.playwright-mcp/
+/preview.html
+
+# Локальные настройки с паролем WiFi — никогда в репозиторий
+main/credentials.h

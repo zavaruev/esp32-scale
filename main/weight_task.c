@@ -1,0 +1,534 @@
+/*
+ * weight_task.c - core 0: acquire, filter, publish.
+ */
+#include "weight_task.h"
+
+#include <math.h>
+#include <string.h>
+
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+#include "hx711.h"
+#include "nvs.h"
+#include "nvs_flash.h"
+
+static const char *TAG = "weight";
+
+#define HX711_DATA_GPIO GPIO_NUM_16
+#define HX711_CLOCK_GPIO GPIO_NUM_17
+
+#define NVS_NS      "scale"
+#define NVS_KEY_CAL "cal_factor"
+#define NVS_KEY_TARE "tare_offset"
+#define NVS_KEY_UNIT "unit"
+/* ~4.5 s of warm-up before the boot tare is taken. */
+#define BOOT_TARE_SETTLE_SAMPLES 51
+
+#define NVS_MAGIC   0xAA55BEEF
+#define NVS_KEY_MAGIC "magic"
+
+static scale_filter_t filter;
+static SemaphoreHandle_t lock;
+static scale_snapshot_t snapshot;
+static volatile bool tare_pending = false;
+
+static float sigma_est = 45.0f;   /* EWMA of raw sigma, for diagnostics */
+
+/* --------------------------------------------------------------- NVS helpers */
+
+static bool nvs_load(scale_filter_t *f)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+        ESP_LOGW(TAG, "NVS empty, using built-in defaults");
+        return false;
+    }
+    uint32_t magic = 0;
+    nvs_get_u32(h, NVS_KEY_MAGIC, &magic);
+    if (magic != NVS_MAGIC) {
+        ESP_LOGW(TAG, "magic mismatch (%08x), using defaults", (unsigned)magic);
+        nvs_close(h);
+        return false;
+    }
+    float cal = 0.0f;
+    int32_t tare = 0;
+    uint8_t unit = 0;
+    nvs_get_i32(h, NVS_KEY_TARE, &tare);
+    nvs_get_u8(h, NVS_KEY_UNIT, &unit);
+    if (nvs_get_i32(h, NVS_KEY_CAL, (int32_t *)&cal) != ESP_OK || cal <= 0.0f) {
+        ESP_LOGW(TAG, "cal_factor missing or invalid, keeping default");
+        cal = 0.0f;
+    }
+    nvs_close(h);
+
+    if (cal > 0.0f) {
+        f->cal_factor = cal;
+    }
+    f->tare_offset = tare;
+    f->unit = (scale_unit_t)(unit % 3);
+    ESP_LOGI(TAG, "loaded cal=%.2f tare=%d", (double)f->cal_factor,
+             (int)f->tare_offset);
+    return true;
+}
+
+static esp_err_t nvs_save(const scale_filter_t *f)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+    /* write_blob on a float avoids the integer-encoding surprises of set_i32 on a
+     * float value, and keeps the struct on-disk layout explicit. */
+    float cal = f->cal_factor;
+    nvs_set_blob(h, NVS_KEY_CAL, &cal, sizeof(cal));
+    nvs_set_i32(h, NVS_KEY_TARE, f->tare_offset);
+    nvs_set_u8(h, NVS_KEY_UNIT, (uint8_t)f->unit);
+    nvs_set_u32(h, NVS_KEY_MAGIC, NVS_MAGIC);
+    err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+/* -------------------------------------------------------------- measurement */
+
+/* Diagnostics ring. Only the measurement task writes it, and only inside the
+ * same critical section that publishes the snapshot. See weight_task.h for why
+ * the console must not poll for samples instead. */
+static raw_log_entry_t rawlog[RAW_LOG_N];
+static int rawlog_idx;
+static int rawlog_len;
+static uint32_t raw_seq;
+static uint32_t read_failures;
+static uint32_t total_read_failures;
+static int64_t last_wait_us;
+
+static void measure_task(void *arg)
+{
+    (void)arg;
+    hx711_t dev;
+    hx711_init(&dev, HX711_DATA_GPIO, HX711_CLOCK_GPIO);
+
+    scale_reading_t r;
+    double prev_ema = 0.0;
+    bool have_prev = false;
+    int settle_count = 0;
+
+    for (;;) {
+        int64_t wait_us = 0;
+        int64_t now_read = esp_timer_get_time();
+        int32_t raw = 0;
+        if (!hx711_read_raw(&dev, &raw, &wait_us)) {
+            /* Back off on failure. Continuing immediately turns a DOUT line that
+             * stays high - unpowered module, or a missed 25th pulse - into a
+             * 100% CPU 0 spin at priority 5: IDLE0 never runs, the task watchdog
+             * panics and the board reboots. Degrading to "no new samples" plus a
+             * warning is the honest behaviour for a failed read. */
+            read_failures++;
+            total_read_failures++;
+            if (read_failures == 1 || read_failures % 100 == 0) {
+                ESP_LOGW(TAG, "HX711 not ready, consecutive failures %u",
+                         (unsigned)read_failures);
+            }
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+        read_failures = 0;
+        last_wait_us = wait_us;
+        int64_t now = esp_timer_get_time();
+        scale_filter_update(&filter, raw, now, &r);
+
+        /* Track sigma on raw samples for the diagnostics panel. */
+        if (have_prev) {
+            double d = fabs(raw - prev_ema);
+            if (d > 0.0 && d < 10000.0) {
+                sigma_est += 0.02f * (float)(d * 1.2533 - sigma_est);
+            }
+        }
+        prev_ema = raw;
+        have_prev = true;
+
+        /* Auto-tare at boot, once the filter has settled.
+         *
+         * With external power there is no USB console to fall back on, so an
+         * un-tared display is unrecoverable without reflashing. The spec asks for
+         * boot auto-tare anyway. It waits for the median window to fill and then
+         * a settle period, because taring mid-warm-up would capture drift. */
+        if (tare_pending && filter.ema_valid) {
+            settle_count++;
+            if (settle_count > BOOT_TARE_SETTLE_SAMPLES) {
+                tare_pending = false;
+                xSemaphoreTake(lock, portMAX_DELAY);
+                /* Deliberately NOT saved to NVS. Writing on every boot would
+                 * burn the flash partition and would also make the stored tare
+                 * drift silently over time. TARE in memory is enough: the stored
+                 * value stays as the last value the user confirmed. */
+                scale_filter_tare(&filter, true);
+                ESP_LOGI(TAG, "boot auto-tare in memory at %ld counts "
+                              "(NVS keeps %ld)",
+                         (long)filter.tare_offset, (long)filter.tare_offset);
+                xSemaphoreGive(lock);
+            }
+        }
+
+        if (xSemaphoreTake(lock, portMAX_DELAY) == pdTRUE) {
+            snapshot.grams = r.grams;
+            snapshot.display_value = (float)scale_convert_units(&filter, r.grams);
+            snapshot.sigma_mg = sigma_est / filter.cal_factor * 1000.0f;
+            snapshot.stable = r.stable;
+            snapshot.zero = r.zero;
+            snapshot.tare_active = r.tare_active;
+            snapshot.azt_enabled = filter.azt_enabled;
+            snapshot.counts = r.counts;
+            snapshot.cal_factor = filter.cal_factor;
+            snapshot.tare_offset = filter.tare_offset;
+            snapshot.unit = filter.unit;
+            snapshot.uptime_s = (uint32_t)(now / 1000000);
+            snapshot.sample_seq++;
+            snapshot.updated = true;
+
+            rawlog[rawlog_idx].seq = ++raw_seq;
+            rawlog[rawlog_idx].t_us = now_read;
+            rawlog[rawlog_idx].counts = raw;
+            rawlog_idx = (rawlog_idx + 1) % RAW_LOG_N;
+            if (rawlog_len < RAW_LOG_N) {
+                rawlog_len++;
+            }
+            xSemaphoreGive(lock);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+esp_err_t weight_task_start(void)
+{
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        err = nvs_flash_init();
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_flash_init failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    scale_filter_init(&filter, 425.6f, 418857);
+    nvs_load(&filter);
+
+    tare_pending = true;
+
+    lock = xSemaphoreCreateMutex();
+    if (lock == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    /* Core 0 owns acquisition, per the hardware spec. */
+    if (xTaskCreatePinnedToCore(measure_task, "measure", 4096, NULL, 5, NULL,
+                                0) != pdPASS) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    ESP_LOGI(TAG, "measurement task on core 0");
+    return ESP_OK;
+}
+
+int weight_task_raw_log(raw_log_entry_t *out, int n)
+{
+    /* Copied straight into the caller's buffer. A staging buffer here doubled the
+     * footprint and did not fit in dram0. */
+    if (xSemaphoreTake(lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return 0;
+    }
+    int have = rawlog_len;
+    int start = (rawlog_len == RAW_LOG_N) ? rawlog_idx : 0;
+    int k = have < n ? have : n;
+    int skip = have - k;                 /* oldest first */
+    for (int i = 0; i < k; i++) {
+        out[i] = rawlog[(start + skip + i) % RAW_LOG_N];
+    }
+    xSemaphoreGive(lock);
+    return k;
+}
+
+int weight_task_raw_log_count(void)
+{
+    return rawlog_len;
+}
+
+void weight_task_raw_log_clear(void)
+{
+    xSemaphoreTake(lock, pdMS_TO_TICKS(50));
+    rawlog_idx = 0;
+    rawlog_len = 0;
+    xSemaphoreGive(lock);
+}
+
+uint32_t weight_task_read_failures(void)
+{
+    return total_read_failures;
+}
+
+int64_t weight_task_last_wait_us(void)
+{
+    return last_wait_us;
+}
+
+
+/* ----------------------------------------------------------- calibration */
+
+static cal_state_t cal_state;
+static SemaphoreHandle_t cal_lock;
+static volatile bool cal_running = false;
+/* Kept as a double rather than passed through the task argument: a task handle
+ * argument is a void*, and routing 73.03 through intptr_t truncates it to 73. */
+static double cal_mass_hint;
+
+void weight_task_cal_get(cal_state_t *out)
+{
+    if (cal_lock == NULL) {
+        memset(out, 0, sizeof(*out));
+        return;
+    }
+    xSemaphoreTake(cal_lock, pdMS_TO_TICKS(50));
+    *out = cal_state;
+    xSemaphoreGive(cal_lock);
+}
+
+static void cal_publish(cal_phase_t phase, const char *detail)
+{
+    xSemaphoreTake(cal_lock, portMAX_DELAY);
+    cal_state.phase = phase;
+    snprintf(cal_state.detail, sizeof(cal_state.detail), "%s", detail);
+    xSemaphoreGive(cal_lock);
+}
+
+static void cal_elapsed(int64_t t0)
+{
+    xSemaphoreTake(cal_lock, portMAX_DELAY);
+    cal_state.elapsed_ms = (esp_timer_get_time() - t0) / 1000;
+    xSemaphoreGive(cal_lock);
+}
+
+/* A real reference sits thousands of counts above the tare; the worst measured
+ * zero drift is 6 counts/s, so this cannot be triggered by noise. */
+#define CAL_LOAD_DETECT_COUNTS 2000
+#define CAL_SETTLE_MIN_MS      15000
+#define CAL_SETTLE_HOLD_TICKS  20      /* 5 s of continuous STABLE */
+#define CAL_SETTLE_MAX_MS      240000
+#define CAL_WAIT_LOAD_MS       300000
+#define CAL_AVERAGE_MS         20000
+
+static void cal_task(void *arg)
+{
+    (void)arg;
+    double mass_hint = cal_mass_hint;
+    int64_t t0 = esp_timer_get_time();
+    scale_snapshot_t snap;
+
+    xSemaphoreTake(lock, portMAX_DELAY);
+    bool azt_was_on = filter.azt_enabled;
+    filter.azt_enabled = false;   /* AZT would swallow the true zero */
+    xSemaphoreGive(lock);
+    cal_publish(CAL_SETTLING, "platform must be EMPTY");
+
+    /* Phase 1: wait until the empty platform genuinely stops moving.
+     *
+     * A fixed short wait is a race. Measured, the platform settled by ~1.8 g
+     * within the first 30 s after boot or after anyone touched it, so an early
+     * tare lands that whole error inside cal_factor. */
+    int stable = 0;
+    int32_t tare = 0;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(250));
+        weight_task_get(&snap);
+        int64_t ms = (esp_timer_get_time() - t0) / 1000;
+        cal_elapsed(t0);
+        if (ms > CAL_SETTLE_MAX_MS) {
+            break;
+        }
+        stable = snap.stable ? stable + 1 : 0;
+        if (ms >= CAL_SETTLE_MIN_MS && stable >= CAL_SETTLE_HOLD_TICKS) {
+            break;
+        }
+    }
+    weight_task_get(&snap);
+    tare = snap.counts;
+    xSemaphoreTake(lock, portMAX_DELAY);
+    scale_filter_tare(&filter, true);
+    filter.azt_enabled = false;
+    xSemaphoreGive(lock);
+    xSemaphoreTake(cal_lock, portMAX_DELAY);
+    cal_state.tare = tare;
+    xSemaphoreGive(cal_lock);
+    cal_publish(CAL_WAIT_LOAD, "put the reference on the platform");
+
+    /* Phase 2: wait for the load. Auto-detected so the operator is not part of
+     * the timing loop. */
+    bool detected = false;
+    int64_t load_at = 0;
+    /* esp_timer_get_time() is microseconds while the timeout constants are in
+     * milliseconds, so the comparison has to be scaled. Compared raw, 15 s read
+     * as larger than 300000 and this loop exited the instant the tare was
+     * taken - the phase died in under a second and reported "no load appeared". */
+    while ((esp_timer_get_time() - t0) / 1000 < CAL_WAIT_LOAD_MS) {
+        vTaskDelay(pdMS_TO_TICKS(250));
+        weight_task_get(&snap);
+        cal_elapsed(t0);
+
+        /* While the platform is still empty, drag the anchor along with the
+         * measured EMA. AZT has to stay off here - with a reference on the scale
+         * it would happily eat the load - but leaving the anchor frozen for the
+         * whole wait is what made the display wrong afterwards: the platform
+         * drifts by ~0.4 g over a few minutes, and that error then applied to
+         * whatever was weighed next. Measured, the reading sat 0.38 g under the
+         * true mass. Tracking stops the moment a load appears. */
+        xSemaphoreTake(lock, pdMS_TO_TICKS(50));
+        if (!detected && filter.ema_valid) {
+            filter.azt_anchor = filter.ema;
+            filter.azt_since_us = 0;
+        }
+        xSemaphoreGive(lock);
+
+        long jump = (long)snap.counts - tare;
+        if (jump < 0) {
+            jump = -jump;
+        }
+        if (jump > CAL_LOAD_DETECT_COUNTS) {
+            detected = true;
+            load_at = esp_timer_get_time();
+            break;
+        }
+    }
+    if (!detected) {
+        cal_publish(CAL_ABORT, "no load appeared");
+        goto restore;
+    }
+
+    /* Phase 3: settle, then average long enough to beat the noise. */
+    cal_publish(CAL_MEASURING, "averaging");
+    vTaskDelay(pdMS_TO_TICKS(3000));
+
+    /* The averaging window starts HERE, not at the moment the load was detected.
+     * Measured: computing it as load_at + 3 s meant the settle delay had already
+     * consumed the whole window by the time it was tested, the loop never ran
+     * once, n stayed 0, and the result came back as "delta 0, measured 0.000 g"
+     * with the reference plainly sitting on the platform. */
+    int64_t sum = 0;
+    int n = 0;
+    int64_t win = esp_timer_get_time() + (int64_t)CAL_AVERAGE_MS * 1000;
+    while (esp_timer_get_time() < win) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+        weight_task_get(&snap);
+        sum += snap.counts;
+        n++;
+        cal_elapsed(t0);
+    }
+
+    double load = n ? (double)sum / n : (double)tare;
+    double delta = load - tare;
+    xSemaphoreTake(lock, pdMS_TO_TICKS(50));
+    float old_cal = filter.cal_factor;
+    xSemaphoreGive(lock);
+
+    bool saved = false;
+    double new_cal = 0.0;
+    if (mass_hint > 0.0 && delta > 0.0) {
+        new_cal = delta / mass_hint;
+        weight_task_set_calibration((float)new_cal, tare);
+        saved = true;
+    }
+
+    xSemaphoreTake(cal_lock, portMAX_DELAY);
+    cal_state.delta = delta;
+    cal_state.grams = delta / old_cal;
+    cal_state.new_cal = new_cal;
+    cal_state.saved = saved;
+    xSemaphoreGive(cal_lock);
+    {
+        char msg[72];
+        if (saved) {
+            snprintf(msg, sizeof(msg), "cal_factor %.2f -> %.2f", (double)old_cal, new_cal);
+        } else {
+            snprintf(msg, sizeof(msg), "measured %.3f g at cal %.2f",
+                     delta / old_cal, (double)old_cal);
+        }
+        cal_publish(CAL_DONE, msg);
+    }
+
+restore:
+    xSemaphoreTake(lock, portMAX_DELAY);
+    filter.azt_enabled = azt_was_on;
+    xSemaphoreGive(lock);
+    cal_running = false;
+    vTaskDelete(NULL);
+}
+
+esp_err_t weight_task_cal_start(double mass_hint)
+{
+    if (cal_lock == NULL) {
+        cal_lock = xSemaphoreCreateMutex();
+        if (cal_lock == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    if (cal_running) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    cal_running = true;
+    memset(&cal_state, 0, sizeof(cal_state));
+    cal_mass_hint = mass_hint;
+    BaseType_t ok = xTaskCreate(cal_task, "cal", 4096, NULL, 4, NULL);
+    if (ok != pdPASS) {
+        cal_running = false;
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+
+void weight_task_get(scale_snapshot_t *out)
+{
+    if (xSemaphoreTake(lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+        *out = snapshot;
+        return;
+    }
+    *out = snapshot;
+    xSemaphoreGive(lock);
+}
+
+void weight_task_tare(void)
+{
+    xSemaphoreTake(lock, portMAX_DELAY);
+    scale_filter_tare(&filter, true);
+    nvs_save(&filter);
+    xSemaphoreGive(lock);
+    ESP_LOGI(TAG, "tare taken");
+}
+
+void weight_task_set_unit(scale_unit_t unit)
+{
+    xSemaphoreTake(lock, portMAX_DELAY);
+    scale_filter_set_unit(&filter, unit);
+    nvs_save(&filter);
+    xSemaphoreGive(lock);
+}
+
+esp_err_t weight_task_set_calibration(float cal_factor, int32_t tare_offset)
+{
+    esp_err_t err;
+    xSemaphoreTake(lock, portMAX_DELAY);
+    scale_filter_set_calibration(&filter, cal_factor, tare_offset);
+    err = nvs_save(&filter);
+    xSemaphoreGive(lock);
+    return err;
+}
+
+void weight_task_set_azt(bool enabled)
+{
+    xSemaphoreTake(lock, portMAX_DELAY);
+    filter.azt_enabled = enabled;
+    xSemaphoreGive(lock);
+}

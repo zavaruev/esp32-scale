@@ -1,0 +1,60 @@
+# ESP32-S3-N16R8: 16 MB quad flash + 8 MB octal PSRAM.
+# These are hardware facts, not preferences - changing them misdescribes the module.
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# 16 MB flash
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+# 8 MB octal PSRAM. ESP-IDF auto-detects the memory type on this module.
+# Relevant later: LVGL draw buffers for the ST7789 must NOT land here, because
+# SPI DMA cannot read from PSRAM. Allocate them from internal DMA-capable RAM.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_TYPE_AUTO=y
+CONFIG_SPIRAM_SPEED_80M=y
+# Tried moving the WiFi task to Core 1 to keep TX interrupts away from the HX711
+# bit-bang, then reverted it: the interference was already removed by masking
+# interrupts inside hx711_read_raw(), while pinning to Core 1 made association
+# with home4 slower (48 s vs 4.3 s once measured) and did not reduce the
+# AUTH_EXPIRE disconnects. WiFi stays on Core 0. See docs/stage1-findings.md.
+
+# CPU MUST run at 240 MHz while WiFi is used. At 160 MHz the radio still hears
+# beacons intermittently but every authentication attempt times out after ~1010
+# ms, and scans eventually return zero networks - which looks exactly like a
+# wrong password or a blocked client. Do not lower this to save power.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240=y
+
+# Network throughput was measured at ~2 KB/s: the 18 KB web page could not be
+# delivered, while a 185-byte API reply arrived in 46 ms. Causes found and fixed
+# together, all of them in the network path rather than in the web code:
+#
+#   - A 100 Hz FreeRTOS tick gives lwIP 10 ms timer resolution, which coarsens
+#     retransmission and delayed-ACK behaviour. 1000 Hz is what the network
+#     stack actually wants.
+#   - TCP send buffer and receive window of 5760 leave too few bytes in flight
+#     for a link that needs a long burst to get a page across.
+#
+# The HX711 read is unaffected in substance: its settle delays are microseconds
+# driven by esp_timer, not by the tick, and pdMS_TO_TICKS() keeps the same
+# wall-clock values.
+CONFIG_FREERTOS_HZ=1000
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=17440
+CONFIG_LWIP_TCP_WND_DEFAULT=17440
+
+# Pin lwIP's TCP/IP thread to Core 1, with WiFi.
+#
+# Measured failure: the device sent the response headers (85 B) and exactly one
+# TCP segment (1440 B = CONFIG_LWIP_TCP_MSS), then stopped permanently while the
+# socket reported ESP_ERR_HTTPD_RESP_SEND. One segment getting out is the
+# signature of a send buffer that never drains, i.e. incoming ACKs not being
+# processed. Core 0 carries the HX711 measurement task, which wakes continuously
+# (the DOUT wait polls), so the network stack gets starved there.
+#
+# With WiFi already on Core 1 and the measurement task on Core 0, both cores now
+# have one clear owner.
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU1=y
+CONFIG_TCPIP_TASK_AFFINITY_CPU1=y

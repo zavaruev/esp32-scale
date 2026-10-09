@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32 Scale</title>
+<style>
+/* Tokens are copied verbatim from DESIGN.md, which is an extracted Apple design
+   system. Editing them here means editing the design system, not the page. */
+:root{
+  --primary:#0066cc;          /* Action Blue, the single accent */
+  --primary-focus:#0071e3;
+  --primary-on-dark:#2997ff;  /* Sky Link Blue, dark surfaces only */
+  --canvas:#ffffff;
+  --parchment:#f5f5f7;
+  --tile:#272729;             /* Near-Black Tile 1 */
+  --ink:#1d1d1f;
+  --muted80:#333333;
+  --muted48:#7a7a7a;
+  --hairline:#e0e0e0;
+  --soft:#f0f0f0;
+  --pill:9999px; --sm:8px; --md:11px; --lg:18px;
+  --product-shadow:0 3px 30px rgba(0,0,0,.22);
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-font-smoothing:antialiased}
+body{
+  font-family:"SF Pro Text",system-ui,-apple-system,BlinkMacSystemFont,
+    "Segoe UI",sans-serif;
+  font-weight:400;
+  font-size:17px;
+  line-height:1.47;
+  letter-spacing:-0.374px;
+  background:var(--canvas);color:var(--ink);
+}
+
+/* DESIGN.md: the global nav is the only true-black element on most pages. */
+.nav{
+  background:#000;height:44px;display:flex;align-items:center;
+  justify-content:center;
+  font-family:system-ui,-apple-system,sans-serif;font-weight:400;
+  font-size:12px;line-height:1;letter-spacing:-.12px;color:#fff;
+}
+
+/* Full-bleed tiles, never rounded. The colour change IS the divider, so there
+   must be no gap and no border between them. */
+.tile{width:100%;padding:80px 24px;text-align:center}
+.tile-dark{background:var(--tile);color:#fff}
+.tile-parchment{background:var(--parchment)}
+
+.tagline{
+  font-family:system-ui,-apple-system,sans-serif;font-weight:600;
+  font-size:21px;line-height:1.19;letter-spacing:.231px;opacity:.6;
+}
+
+/* The weight is the product render: it is the one element DESIGN.md allows a
+   shadow on, and it must dominate the viewport. */
+/* NB: letter-spacing MUST NOT go inside the font shorthand. It is not one of the
+   properties font accepts, so a shorthand carrying it is dropped wholesale and
+   the element silently falls back to Times New Roman 16px. Individual
+   properties keep the rule readable and, more importantly, visible. */
+.hero{
+  display:inline-block;margin:16px auto 0;
+  font-family:"SF Pro Display",system-ui,-apple-system,sans-serif;
+  font-weight:600;
+  font-size:88px;
+  line-height:1.02;
+  letter-spacing:-1.8px;
+  text-shadow:var(--product-shadow);
+  /* Tabular figures keep digit widths stable while the value updates 2.5x per
+     second; without it the readout jitters sideways. */
+  font-variant-numeric:tabular-nums;
+  font-feature-settings:"tnum" 1;
+}
+.hero-unit{
+  font-family:system-ui,-apple-system,sans-serif;
+  font-weight:600;
+  font-size:24px;
+  line-height:1.19;
+  letter-spacing:.231px;
+  opacity:.55;margin-left:12px;
+}
+
+.chips{margin-top:40px;display:flex;gap:12px;justify-content:center}
+.chip{
+  font-family:system-ui,-apple-system,sans-serif;font-weight:400;
+  font-size:12px;line-height:1;letter-spacing:-.12px;
+  padding:7px 14px;border-radius:var(--pill);
+  border:1px solid rgba(255,255,255,.3);color:#fff;opacity:.4;
+  transition:opacity .18s,border-color .18s;
+}
+.chip.on{opacity:1;border-color:var(--primary-on-dark);color:var(--primary-on-dark)}
+
+/* Buttons. Pill radius is the brand action signal; active state is
+   scale(0.95) on every one of them. */
+.btn{
+  font-family:system-ui,-apple-system,sans-serif;font-weight:400;
+  font-size:17px;line-height:1;letter-spacing:-0.374px;
+  border-radius:var(--pill);padding:11px 22px;border:0;cursor:pointer;
+  transition:transform .12s;
+}
+.btn:active{transform:scale(.95)}
+.btn:focus-visible{outline:2px solid var(--primary-focus);outline-offset:2px}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-ghost{background:transparent;color:var(--primary);border:1px solid var(--primary)}
+.actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+
+.label{
+  font-family:system-ui,-apple-system,sans-serif;font-weight:600;
+  font-size:14px;line-height:1.29;letter-spacing:-.224px;margin-bottom:14px;
+}
+.units{display:flex;gap:10px;justify-content:center}
+.units .btn{padding:9px 20px;font-size:15px}
+
+/* Utility card: hairline border, 18px radius, 24px padding. No shadow. */
+.card{
+  background:var(--canvas);border:1px solid var(--hairline);
+  border-radius:var(--lg);padding:24px;text-align:left;max-width:560px;
+  margin:0 auto;
+}
+.kv{
+  font-family:system-ui,-apple-system,sans-serif;font-weight:400;
+  font-size:14px;line-height:1.43;letter-spacing:-.224px;
+  color:var(--muted48);display:flex;justify-content:space-between;
+  gap:16px;padding:9px 0;border-bottom:1px solid var(--soft);
+}
+.kv:last-child{border-bottom:0}
+.kv b{font-weight:400;color:var(--muted80);font-variant-numeric:tabular-nums}
+
+/* Calibration panel. Hidden until the operator asks for it; the sequence takes
+   about 30 s and needs two physical actions, so it must say which one it is
+   waiting for rather than sitting silent. */
+.cal-panel{display:none;margin-top:16px}
+.cal-panel.open{display:block}
+.cal-step{
+  font-family:system-ui,-apple-system,sans-serif;font-weight:400;
+  font-size:14px;line-height:1.43;letter-spacing:-.224px;
+  color:var(--muted80);margin-bottom:14px;
+}
+.cal-bar{
+  height:3px;background:var(--soft);border-radius:2px;overflow:hidden;
+  margin-bottom:14px;
+}
+.cal-bar span{display:block;height:100%;width:0;background:var(--primary);
+  transition:width .4s ease}
+.cal-input{
+  font-family:system-ui,-apple-system,sans-serif;font-size:17px;
+  letter-spacing:-0.374px;color:var(--ink);
+  padding:10px 14px;border:1px solid var(--hairline);border-radius:var(--md);
+  width:120px;text-align:right;font-variant-numeric:tabular-nums;
+}
+.cal-input:focus{outline:2px solid var(--primary-focus);outline-offset:1px}
+.cal-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+/* A button that reflects a persistent machine state shows that state without
+   competing with the primary action. DESIGN.md allows one solid accent per
+   screen, and filling a second button in the same row made "Обнулить" stop
+   reading as the primary action. A tinted background with accent text says
+   "engaged" just as clearly and leaves the hierarchy intact. */
+.btn.state-on{
+  background:rgba(0,102,204,.09);color:var(--primary);
+  border-color:rgba(0,102,204,.45);
+}
+
+footer{
+  background:var(--parchment);padding:64px 24px;
+  font-family:system-ui,-apple-system,sans-serif;font-weight:400;
+  font-size:12px;line-height:1;letter-spacing:-.12px;color:var(--muted48);
+  text-align:center;
+}
+@media(max-width:640px){
+  .hero{font-size:56px;letter-spacing:-1.6px}
+  .tile{padding:56px 20px}
+}
+</style>
+</head>
+<body>
+
+<div class="nav">ESP32 Scale</div>
+
+<!-- Hero. Weight dominates; everything else is quiet, per DESIGN.md's
+     "photography-first presentation, UI recedes". -->
+<div class="tile tile-dark">
+  <div class="tagline">Точный вес</div>
+  <div><span class="hero"><span id="weight">0.00</span><span class="hero-unit" id="unit">г</span></span></div>
+  <div class="chips">
+    <span class="chip" id="chip-stable">STABLE</span>
+    <span class="chip" id="chip-zero">ZERO</span>
+    <span class="chip" id="chip-tare">TARE</span>
+    <span class="chip" id="chip-avg">AVG</span>
+  </div>
+</div>
+
+<!-- Actions live on parchment, which is the colour change acting as divider. -->
+<div class="tile tile-parchment" style="padding:48px 20px">
+  <div class="actions">
+    <button class="btn btn-primary" onclick="tare()">Обнулить</button>
+    <button class="btn btn-ghost" id="btn-azt" onclick="toggleAzt()">Авто-ноль</button>
+    <button class="btn btn-ghost" onclick="openCal()">Калибровка</button>
+  </div>
+</div>
+
+<div class="tile" style="padding:0 20px 20px">
+  <div class="card cal-panel" id="cal-panel">
+    <div class="label">Мастер калибровки</div>
+    <div class="cal-step" id="cal-step">Нажмите «Начать», затем выполните шаги по порядку.</div>
+    <div class="cal-bar"><span id="cal-bar"></span></div>
+    <div class="cal-row" id="cal-mass-row">
+      <input class="cal-input" id="cal-mass" type="number" step="0.01"
+             min="0.1" value="73.03" inputmode="decimal">
+      <span style="font-size:14px;color:var(--muted48)">г — масса эталона</span>
+    </div>
+    <div class="cal-row" style="margin-top:14px">
+      <button class="btn btn-primary" id="cal-go" onclick="startCal()">Начать</button>
+      <button class="btn btn-ghost" onclick="calMeasureOnly()">Только измерить</button>
+    </div>
+  </div>
+</div>
+
+<div class="tile" style="padding:48px 20px">
+  <div class="card">
+    <div class="label">Единицы измерения</div>
+    <div class="units">
+      <button class="btn btn-ghost" data-code="g"  onclick="setUnit(0)">г</button>
+      <button class="btn btn-ghost" data-code="kg" onclick="setUnit(1)">кг</button>
+      <button class="btn btn-ghost" data-code="oz" onclick="setUnit(2)">oz</button>
+    </div>
+  </div>
+</div>
+
+<div class="tile" style="padding:0 20px 64px">
+  <div class="card">
+    <div class="label">Диагностика</div>
+    <div class="kv"><span>Сырой отсчёт</span><b id="d-counts">—</b></div>
+    <div class="kv"><span>Шум σ</span><b id="d-sigma">—</b></div>
+    <div class="kv"><span>cal_factor</span><b id="d-cal">—</b></div>
+    <div class="kv"><span>tare_offset</span><b id="d-tare">—</b></div>
+    <div class="kv"><span>Время работы</span><b id="d-up">—</b></div>
+  </div>
+</div>
+
+<footer>ESP32-S3 · HX711 · калибровка по эталону</footer>
+
+<script>
+/* Resolution decided 2026-10-07: 0.05 g at rest. The filter can do it, and the
+   measured accuracy on a paired measurement is +/-0.04 g, so the readout rounds
+   to that rather than showing filter noise as extra digits. */
+var step = 0.05;
+
+/* The API speaks Latin codes ("g", "kg", "oz"); the page shows Cyrillic labels.
+   Keeping the mapping in one table stops the two drifting apart - comparing the
+   raw API string against button text is what left no unit highlighted. */
+var UNITS = [
+  {code: 'g',  label: '\u0433',  step: 0.01, decimals: 2},
+  {code: 'kg', label: '\u043a\u0433', step: 0.005, decimals: 3},
+  {code: 'oz', label: 'oz',      step: 0.005, decimals: 3}
+];
+
+var lastUnit = null;
+var calTimer = null;
+var calPhase = 'idle';
+
+/* The readout shows a running mean, not the instantaneous sample.
+ *
+ * Measured on a stationary 73.03 g reference: raw sigma is 45 counts = 107 mg,
+ * and the mean over 40 s comes out within 0.020 g of the reference. So the
+ * weight IS knowable - but only as an average. Showing the instantaneous value,
+ * rounded to 0.05 g, made the last digit flicker while the leading digits stayed
+ * correct, which reads as an instrument that cannot settle.
+ *
+ * Averaging 12 polls at 1.5 s gives an 18 s window: sigma of the mean falls to
+ * about 31 mg, so the 0.01 g digit moves only slightly and the eye can lock on
+ * the stable part. The window is reset on a unit change or after TARE, so the
+ * reading reacts immediately when the operator does something. */
+var AVG_N = 12;
+var hist = [];
+
+function unitInfo(code) {
+  for (var i = 0; i < UNITS.length; i++) {
+    if (UNITS[i].code === code) return UNITS[i];
+  }
+  return UNITS[0];
+}
+
+function resetAverage() { hist = []; }
+
+function meanValue(v) {
+  hist.push(v);
+  if (hist.length > AVG_N) hist.shift();
+  var sum = 0;
+  for (var i = 0; i < hist.length; i++) sum += hist[i];
+  return {v: sum / hist.length, n: hist.length};
+}
+
+function paint(s) {
+  var u = unitInfo(s.unit);
+
+  /* Average in grams, then convert, so switching units does not mix scales. */
+  var m = meanValue(s.grams);
+  document.getElementById('weight').textContent = m.v.toFixed(u.decimals);
+  document.getElementById('unit').textContent = u.label;
+
+  setChip('chip-stable', s.stable);
+  setChip('chip-zero', s.zero);
+  setChip('chip-tare', s.tare);
+  /* AVG lights once the window is full, i.e. when the number on screen is a
+     real average rather than a partly warmed-up one. */
+  setChip('chip-avg', m.n >= AVG_N);
+
+  document.getElementById('d-counts').textContent = s.counts;
+  document.getElementById('d-sigma').textContent = s.sigma_mg.toFixed(0) + ' \u043c\u0433';
+  document.getElementById('d-cal').textContent = s.cal.toFixed(2);
+  document.getElementById('d-tare').textContent = s.tare_offset;
+  document.getElementById('d-up').textContent =
+      Math.floor(s.uptime / 60) + ' \u043c\u0438\u043d';
+
+  /* Auto-zero is a persistent machine state, so its button is lit while it is
+     on. Without this the operator could not tell whether it was still armed -
+     and the endpoint it calls turns AZT off, which used to be irreversible from
+     the page. */
+  var b = document.getElementById('btn-azt');
+  b.classList.toggle('state-on', !!s.azt);
+  b.textContent = s.azt ? '\u0410\u0432\u0442\u043e-\u043d\u043e\u043b\u044c \u0432\u043a\u043b' : '\u0410\u0432\u0442\u043e-\u043d\u043e\u043b\u044c \u0432\u044b\u043a\u043b';
+
+  if (s.unit !== lastUnit) {
+    lastUnit = s.unit;
+    resetAverage();
+    var btns = document.querySelectorAll('.units .btn');
+    for (var i = 0; i < btns.length; i++) {
+      var on = btns[i].getAttribute('data-code') === s.unit;
+      btns[i].classList.toggle('btn-primary', on);
+      btns[i].classList.toggle('btn-ghost', !on);
+    }
+  }
+}
+
+function setChip(id, on) {
+  document.getElementById(id).className = 'chip' + (on ? ' on' : '');
+}
+
+/* Never start a poll while the previous one is still in flight.
+ *
+ * Measured on a weak link (rssi -70..-72, 18 APs on overlapping channels): five
+ * back-to-back requests came back in 0.17, 0.51, 0.93, 3.97 and 0.79 s, while an
+ * idle device answered in 0.035-0.24 s. The queue was self-inflicted - each
+ * pending request turns into a WiFi transmit burst, and bursts collide on a busy
+ * channel. This is the same mechanism that used to corrupt the HX711 readings, so
+ * piling requests up also costs measurement quality. */
+var inFlight = false;
+
+function poll() {
+  if (inFlight) return;
+  inFlight = true;
+  fetch('/api/weight', {cache: 'no-store'})
+    .then(function (r) { return r.json(); })
+    .then(paint)
+    .catch(function () {})
+    .then(function () { inFlight = false; });
+}
+
+function tare() { resetAverage(); fetch('/api/tare', {method: 'POST'}).then(poll); }
+
+function toggleAzt() {
+  var on = document.getElementById('btn-azt').classList.contains('state-on');
+  fetch('/api/azt?' + (on ? 'off' : 'on'), {method: 'POST'}).then(poll);
+}
+
+function setUnit(u) {
+  fetch('/api/unit?u=' + u, {method: 'POST'}).then(poll);
+}
+
+/* ------------------------------------------------------------ calibration */
+
+function openCal() {
+  var p = document.getElementById('cal-panel');
+  p.classList.toggle('open');
+  if (p.classList.contains('open')) p.scrollIntoView({behavior: 'smooth'});
+}
+
+var CAL_TEXT = {
+  idle:      ['\u0413\u043e\u0442\u043e\u0432 \u043a \u043a\u0430\u043b\u0438\u0431\u0440\u043e\u0432\u043a\u0435.', 0],
+  settling:  ['\u0421\u043d\u0438\u043c\u0430\u0435 \u043c\u0430\u0441\u0441\u0443 \u0441 \u043f\u043b\u0430\u0442\u0444\u043e\u0440\u043c\u044b \u0438 \u043d\u0435 \u043a\u0430\u0441\u0430\u0439\u0441\u044c\u0442\u0435\u0441\u044c. \u041e\u0442\u043e\u0436\u0434\u0438\u0442\u0435\u0441\u044c \u043f\u043e\u043a\u0430 \u043f\u043b\u0430\u0442\u0444\u043e\u0440\u043c\u0430.', 10],
+  wait_load: ['\u041f\u043e\u0441\u0442\u0430\u0432\u044c\u0442\u0435 \u044d\u0442\u0430\u043b\u043e\u043d.', 40],
+  measuring: ['\u0418\u0437\u043c\u0435\u0440\u0435\u043d\u0438\u0435 \u0433\u0440\u0443\u0437\u0430.', 80],
+  done:     ['\u0413\u043e\u0442\u043e\u0432\u043e.', 100],
+  abort:    ['\u041f\u0440\u0435\u0440\u0432\u0430\u043d\u043e.', 100]
+};
+
+function setCalStep(phase, text) {
+  calPhase = phase;
+  var t = CAL_TEXT[phase] || CAL_TEXT.idle;
+  document.getElementById('cal-step').textContent = text || t[0];
+  document.getElementById('cal-bar').style.width = t[1] + '%';
+  document.getElementById('cal-go').disabled = (phase === 'settling' ||
+      phase === 'wait_load' || phase === 'measuring');
+}
+
+function startCal(apply) {
+  var mass = parseFloat(document.getElementById('cal-mass').value);
+  var url = apply ? ('/api/cal/start?mass=' + mass) : '/api/cal/start';
+  setCalStep('settling');
+  fetch(url, {method: 'POST'})
+    .then(function () { pollCal(); })
+    .catch(function () { setCalStep('idle'); });
+}
+
+function calMeasureOnly() { startCal(false); }
+
+function pollCal() {
+  if (calTimer) clearTimeout(calTimer);
+  fetch('/api/cal', {cache: 'no-store'})
+    .then(function (r) { return r.json(); })
+    .then(function (c) {
+      var text = null;
+      if (c.phase === 'settling') {
+        text = 'Снимаем тару. Отсчёт ' + (c.elapsed_ms / 1000).toFixed(0) +
+               ' с \u2014 платформа должна быть пустой и неподвижной.';
+      } else if (c.phase === 'measuring') {
+        text = 'Измерение груза, усредняем 20 с. Не трогайте платформу.';
+      } else if (c.phase === 'done') {
+        text = c.detail + '   \u0394 ' + c.delta.toFixed(0) + ' \u043e\u0442\u0441. ' +
+               '\u0418\u0437\u043c\u0435\u0440\u0435\u043d\u043e ' + c.grams.toFixed(3) + ' \u0433' +
+               (c.new_cal ? ', \u043d\u043e\u0432\u044b\u0439 cal_factor ' + c.new_cal.toFixed(2) +
+                           (c.saved ? ' \u0437\u0430\u043f\u0438\u0441\u0430\u043d' : ' (\u043d\u0435 \u0437\u0430\u043f\u0438\u0441\u0430\u043d)')
+                          : ' \u2014 \u043a\u043e\u044d\u0444\u0444\u0438\u0446\u0438\u0435\u043d\u0442 \u043d\u0435 \u043c\u0435\u043d\u044f\u043b\u0441\u044f');
+        poll();
+      }
+      setCalStep(c.phase, text);
+      if (c.phase === 'settling' || c.phase === 'wait_load' ||
+          c.phase === 'measuring') {
+        calTimer = setTimeout(pollCal, 1000);
+      }
+    })
+    .catch(function () {});
+}
+
+/* 1500 ms, not 400 ms. Every poll is a burst of WiFi transmit, and each burst
+   raises the chance of an RF/rail disturbance reaching the HX711. Measured on an
+   empty platform: polling every 100 ms corrupted 10.3% of raw samples, no HTTP
+   traffic at all gave 0%. The readout stays responsive because the filter's own
+   settling time is ~1-3 s, so a faster poll shows the same number more often. */
+setInterval(poll, 1500);
+poll();
+</script>
+</body>
+</html>
