@@ -249,10 +249,13 @@ var step = 0.05;
 /* The API speaks Latin codes ("g", "kg", "oz"); the page shows Cyrillic labels.
    Keeping the mapping in one table stops the two drifting apart - comparing the
    raw API string against button text is what left no unit highlighted. */
+/* per = how many grams make one unit, so the displayed figure is grams / per.
+   The average is kept in grams regardless of what is selected: averaging mixed
+   scales inside one window would be meaningless. */
 var UNITS = [
-  {code: 'g',  label: '\u0433',  step: 0.01, decimals: 2},
-  {code: 'kg', label: '\u043a\u0433', step: 0.005, decimals: 3},
-  {code: 'oz', label: 'oz',      step: 0.005, decimals: 3}
+  {code: 'g',  label: '\u0433',  per: 1,            decimals: 2},
+  {code: 'kg', label: '\u043a\u0433', per: 1000,         decimals: 3},
+  {code: 'oz', label: 'oz', per: 28.349523125, decimals: 3}
 ];
 
 var lastUnit = null;
@@ -294,9 +297,12 @@ function meanValue(v) {
 function paint(s) {
   var u = unitInfo(s.unit);
 
-  /* Average in grams, then convert, so switching units does not mix scales. */
+  /* Average in grams, then convert into the selected unit. The conversion was
+     missing here: the comment described it but no divide existed, so switching
+     to kg or oz changed only the label while the digits stayed in grams. */
   var m = meanValue(s.grams);
-  document.getElementById('weight').textContent = m.v.toFixed(u.decimals);
+  var shown = m.v / u.per;
+  document.getElementById('weight').textContent = shown.toFixed(u.decimals);
   document.getElementById('unit').textContent = u.label;
 
   setChip('chip-stable', s.stable);
