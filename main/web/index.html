@@ -269,30 +269,53 @@ var calPhase = 'idle';
  * and the mean over 40 s comes out within 0.020 g of the reference. So the
  * weight IS knowable - but only as an average. Showing the instantaneous value,
  * rounded to 0.05 g, made the last digit flicker while the leading digits stayed
- * correct, which reads as an instrument that cannot settle.
+ * correct, which reads as an instrument that cannot settle. */
+/* Twelve polls at 1.5 s = an 18 s window.
  *
-/* Six polls at 1.5 s - a 9 s window. It was 12 (18 s), which was too long: each
- * poll already arrives smoothed by the EMA over roughly a second, so the extra
- * samples bought very little and the delay was pure waiting. */
-var AVG_N = 6;
+ * Widened from 9 s because the returns were measured, not guessed. Sigma of the
+ * window mean, from a clean 45 s capture (raw sigma 110 mg):
+ *
+ *     window     sigma of mean    what it costs
+ *      4.4 s          30 mg
+ *      8.9 s          23 mg          (was here)
+ *     17.8 s          15 mg          wait twice as long
+ *     26.6 s        10.5 mg          wait three times as long
+ *
+ * The curve has its knee at 18 s: 9 -> 18 buys 35% of the error for double the
+ * wait, and beyond that each further doubling returns less than half as much.
+ * That is the signature of correlated noise - measured sigma of the mean is two
+ * to three times worse than the 1/sqrt(N) a white noise would give, so averaging
+ * cannot be pushed far.
+ *
+ * Note what this does NOT buy: a trustworthy 0.01 g digit. At 15 mg the last
+ * digit is still dominated by noise. The hold (ФИКС) is what makes the figure
+ * steady, and the honest resolution of this instrument remains 0.05 g. */
+var AVG_N = 12;
 var hist = [];
 
 /* Hold the reading once it has settled.
  *
  * Averaging cannot explain why the figure never stops moving. Measured: the noise
- * of one raw sample is 107 mg, so averaging does reduce it, but the platform's
- * resting point itself wanders by up to +/-0.4 g over minutes. The instrument is
- * quiet; what it stands on is not, and the average follows the platform rather
- * than the load.
+ * of one raw sample is 107 mg, so averaging does reduce it, but the resting point
+ * still wanders by ~0.6 g peak to peak over minutes. That wander is NOT a drift: a
+ * ten minute measurement gives a trend of +3 mg/min and a total shift of -3 counts
+ * (see AGENTS.md). It is a random walk, so the window mean follows the platform as
+ * surely as it follows the load, and no window length removes it. Latching does.
  *
  * A real scale answers this by latching the figure once it is steady, which is
  * what these constants implement: hold after LOCK_HOLD consecutive readings
  * within LOCK_TOL of each other, release on anything beyond LOCK_RELEASE. That
  * release width is far larger than any plausible drift, so a genuine weight
- * change always gets through. */
-var LOCK_TOL     = 0.02;   /* g: smaller movement means the same weight */
+ * change always gets through.
+ *
+ * The hold is also released when the instrument reports zero. Inside the deadband
+ * the firmware snaps the anchor to the reading, so the authoritative value is
+ * exactly zero, and a frozen figure would then show something the instrument does
+ * not believe. The consequence is that an empty platform shows a live 0.00 with
+ * the hold indicator off, which is intended: there is nothing to latch. */
+var LOCK_TOL     = 0.03;   /* g: must exceed the step of the window mean */
 var LOCK_RELEASE = 0.5;    /* g: certainly a different weight */
-var LOCK_HOLD    = 4;      /* consecutive polls inside the tolerance */
+var LOCK_HOLD    = 3;      /* consecutive polls inside the tolerance */
 var locked = false, lockedValue = 0, quiet = 0, candidate = null;
 
 function unitInfo(code) {
