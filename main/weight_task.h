@@ -30,6 +30,23 @@ typedef struct {
      * rate measurable at all. */
     uint32_t sample_seq;
     bool    updated;
+
+    /* Mean of the raw counts over a window measured in SAMPLES, not in polls.
+     *
+     * The browser used to do this averaging itself, across polls 1.5 s apart.
+     * That is the same arithmetic at a hundredth of the data rate: 12 polls is
+     * 12 numbers, while the device produces 11.3 of them every second and
+     * throws 17 away between polls. Averaging here costs no wall-clock time at
+     * all, so the same precision arrives in a quarter of the time.
+     *
+     * Expressed relative to the same auto-zero anchor as grams, so tare, deadband
+     * and the zero flag all keep meaning exactly what they did. */
+    float   avg_grams;
+    /* Standard error of that mean, from the measured raw sigma and the window
+     * length. This is what makes the number honest: it says how much the figure
+     * can still be trusted, rather than leaving the page to guess from polls. */
+    float   avg_sigma_mg;
+    uint16_t avg_n;
 } scale_snapshot_t;
 
 /* Loads calibration from NVS, starts the measurement task on core 0. */

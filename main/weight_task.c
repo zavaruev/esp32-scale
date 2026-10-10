@@ -45,6 +45,22 @@ static SemaphoreHandle_t lock;
 static scale_snapshot_t snapshot;
 static volatile bool tare_pending = false;
 
+/* Running mean of the raw counts, over AVG_WINDOW_SAMPLES raw samples.
+ *
+ * 45 samples is 4.0 s at the 11.3 Hz this hardware is stuck at. With a measured
+ * raw sigma of 110 mg the standard error of the mean is 110/sqrt(45) = 16 mg,
+ * which is what the 18 s browser window was buying at four and a half times the
+ * waiting.
+ *
+ * The window fills from empty, so the first reading after a load lands arrives
+ * almost immediately and then tightens as samples accumulate - the page shows a
+ * figure at once and gets a trustworthy one within a few seconds. */
+#define AVG_WINDOW_SAMPLES 45
+static int32_t avg_hist[AVG_WINDOW_SAMPLES];
+static int32_t avg_sum;
+static int avg_idx;
+static int avg_len;
+
 static float sigma_est = 45.0f;   /* EWMA of raw sigma, for diagnostics */
 
 /* --------------------------------------------------------------- NVS helpers */
@@ -260,6 +276,26 @@ static void measure_task(void *arg)
         }
 
         if (xSemaphoreTake(lock, portMAX_DELAY) == pdTRUE) {
+            /* Running mean of the raw stream, converted against the same anchor
+             * the live figure uses so tare and the zero flag behave identically. */
+            if (avg_len < AVG_WINDOW_SAMPLES) {
+                avg_hist[avg_idx] = raw;
+                avg_sum += raw;
+                avg_len++;
+            } else {
+                avg_sum -= avg_hist[avg_idx];
+                avg_hist[avg_idx] = raw;
+                avg_sum += raw;
+            }
+            avg_idx = (avg_idx + 1) % AVG_WINDOW_SAMPLES;
+            double avg_counts = (double)avg_sum / avg_len;
+            double avg_rel = avg_counts - filter.azt_anchor;
+            snapshot.avg_grams = (float)(avg_rel / filter.cal_factor);
+            snapshot.avg_n = (uint16_t)avg_len;
+            snapshot.avg_sigma_mg = (float)(sigma_est /
+                                            sqrt((double)avg_len) /
+                                            filter.cal_factor * 1000.0);
+
             snapshot.grams = r.grams;
             snapshot.display_value = (float)scale_convert_units(&filter, r.grams);
             snapshot.sigma_mg = sigma_est / filter.cal_factor * 1000.0f;

@@ -469,12 +469,13 @@ static esp_err_t api_weight(httpd_req_t *req)
         break;
     }
 
-    char buf[320];
+    char buf[384];
     int n = snprintf(buf, sizeof(buf),
                      "{\"value\":%.4f,\"unit\":\"%s\",\"decimals\":%d,"
                      "\"grams\":%.2f,\"stable\":%s,\"zero\":%s,\"tare\":%s,"
                      "\"counts\":%ld,\"sigma_mg\":%.1f,\"cal\":%.2f,"
                      "\"tare_offset\":%ld,\"uptime\":%lu,\"azt\":%s,"
+                     "\"avg_grams\":%.3f,\"avg_sigma_mg\":%.1f,\"avg_n\":%u,"
                      "\"heap_free\":%lu,\"heap_min\":%lu}",
                      (double)s.display_value, unit, decimals, (double)s.grams,
                      s.stable ? "true" : "false", s.zero ? "true" : "false",
@@ -482,6 +483,8 @@ static esp_err_t api_weight(httpd_req_t *req)
                      (double)s.sigma_mg, (double)s.cal_factor,
                      (long)s.tare_offset, (unsigned long)s.uptime_s,
                      s.azt_enabled ? "true" : "false",
+                     (double)s.avg_grams, (double)s.avg_sigma_mg,
+                     (unsigned)s.avg_n,
                      (unsigned long)esp_get_free_heap_size(),
                      (unsigned long)esp_get_minimum_free_heap_size());
 

@@ -270,27 +270,27 @@ var calPhase = 'idle';
  * weight IS knowable - but only as an average. Showing the instantaneous value,
  * rounded to 0.05 g, made the last digit flicker while the leading digits stayed
  * correct, which reads as an instrument that cannot settle. */
-/* Twelve polls at 1.5 s = an 18 s window.
+/* Two polls, 3 s - and that is all that is left of the browser-side averaging.
  *
- * Widened from 9 s because the returns were measured, not guessed. Sigma of the
- * window mean, from a clean 45 s capture (raw sigma 110 mg):
+ * This used to be 12 polls, an 18 s window, chosen from a measured curve of
+ * sigma against window length. The curve was right and the conclusion drawn from
+ * it was wrong: it asked how to average more POLLS, when the polls were the
+ * scarce resource.
  *
- *     window     sigma of mean    what it costs
- *      4.4 s          30 mg
- *      8.9 s          23 mg          (was here)
- *     17.8 s          15 mg          wait twice as long
- *     26.6 s        10.5 mg          wait three times as long
+ * The device samples at 11.3 Hz. The browser polls once every 1.5 s. So each
+ * poll throws away seventeen raw samples, and a 12 poll window is twelve numbers
+ * stretched over eighteen seconds - while the same 45 raw samples are available
+ * to the device in four seconds, where averaging them costs nothing because
+ * nobody has to wait for a network round trip.
  *
- * The curve has its knee at 18 s: 9 -> 18 buys 35% of the error for double the
- * wait, and beyond that each further doubling returns less than half as much.
- * That is the signature of correlated noise - measured sigma of the mean is two
- * to three times worse than the 1/sqrt(N) a white noise would give, so averaging
- * cannot be pushed far.
+ * Measured: raw sigma 110 mg, so the mean of 45 raw samples has a standard error
+ * of 110/sqrt(45) = 16 mg. The 18 s window was buying about 15 mg. Same answer,
+ * a quarter of the time.
  *
- * Note what this does NOT buy: a trustworthy 0.01 g digit. At 15 mg the last
- * digit is still dominated by noise. The hold (ФИКС) is what makes the figure
+ * Note what this does NOT buy: a trustworthy 0.01 g digit. At 16 mg the last
+ * digit is still noise-dominated. The hold (ФИКС) is what makes the figure
  * steady, and the honest resolution of this instrument remains 0.05 g. */
-var AVG_N = 12;
+var AVG_N = 2;
 var hist = [];
 
 /* Hold the reading once it has settled.
@@ -355,6 +355,8 @@ function holdOrShow(grams, stable) {
 }
 
 function meanValue(v) {
+  /* Kept only to smooth the last couple of polls. The real averaging happens in
+   * the device now - see the note above AVG_N. */
   hist.push(v);
   if (hist.length > AVG_N) hist.shift();
   var sum = 0;
@@ -385,7 +387,10 @@ function paint(s) {
     m = {v: 0, n: 0};
     shown = 0;
   } else {
-    m = meanValue(s.grams);
+    /* The device already averaged the raw stream at 11.3 Hz, which is the only
+     * place averaging is free. Averaging here again across polls 1.5 s apart adds
+     * waiting, not information - see AVG_N. */
+    m = meanValue(s.avg_grams);
     shown = holdOrShow(m.v, s.stable);
   }
   shown = shown / u.per;
@@ -395,9 +400,9 @@ function paint(s) {
   setChip('chip-stable', s.stable);
   setChip('chip-zero', s.zero);
   setChip('chip-tare', s.tare);
-  /* AVG lights once the window is full, i.e. when the number on screen is a
-     real average rather than a partly warmed-up one. */
-  setChip('chip-avg', m.n >= AVG_N);
+  /* AVG lights when the device's own window is full, so the figure on screen is
+     backed by a full 45 samples rather than a partly warmed-up mean. */
+  setChip('chip-avg', s.avg_n >= 45);
   setChip('chip-lock', locked);
 
   document.getElementById('d-counts').textContent = s.counts;
