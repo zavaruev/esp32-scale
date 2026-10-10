@@ -22,13 +22,37 @@
  * capture, but a wide window would swallow real small loads. At the 0.05 g
  * target the practical floor is ~0.1 g, and AZT is a convenience for holding
  * zero, not a substitute for the TARE button. */
-#define AZT_WINDOW       40.0   /* counts, ~0.094 g */
-#define AZT_RATE         6.0    /* counts/s, must beat the worst drift of 6.1 */
+/* Auto-zero must be able to FOLLOW the platform, and to do that it needs a
+ * window wider than the deadband.
+ *
+ * These used to be the same constant, DEADBAND was defined as AZT_WINDOW. That
+ * made the tracking branch unreachable: it asks for |diff| <= AZT_WINDOW, but
+ * the hard-zero branch above it already claims everything <= DEADBAND, and the
+ * two numbers were equal. So the anchor could only ever snap to a reading that
+ * was already inside the deadband, and once the platform wandered further than
+ * that nothing pulled it back.
+ *
+ * Observed 2026-10-10 as "zero holds for a moment and then the figure walks
+ * away and never comes back" - which is exactly the missing tracking.
+ *
+ * Window sized from measurement, not taste. Ten minutes with the platform
+ * untouched: sigma 44 counts, peak to peak 258 counts. 400 counts is about nine
+ * sigma and covers the whole observed range with margin.
+ *
+ * The cost, stated plainly: a load smaller than the window would eventually be
+ * walked down to zero. 400 counts is 0.94 g. The smallest reference in use is
+ * 30 g, 32 times larger, and a step of that size leaves the window immediately
+ * so tracking never starts. AZT_HOLD_US guards the edge: the anchor only moves
+ * after the reading has stayed inside the window for two seconds. */
+#define AZT_WINDOW       400.0  /* counts, ~0.94 g */
+#define AZT_RATE         30.0   /* counts/s: cross the window in ~13 s */
 #define AZT_HOLD_US      2000000LL
 
-/* Deadband equals the AZT window so zero does not flicker between 0 and a
- * non-zero digit when the two disagree. */
-#define DEADBAND         AZT_WINDOW
+/* Inside this the reading is forced to exactly zero, so the last digit cannot
+ * flicker. Much narrower than AZT_WINDOW on purpose: it decides what counts as
+ * "nothing there", while the window above decides how far the zero is allowed
+ * to chase the platform. */
+#define DEADBAND         40.0   /* counts, ~0.094 g */
 
 /* STABLE is computed on RAW samples before any smoothing. On the EMA output a
  * smoothed signal is trivially always "stable" and the indicator is useless. */
@@ -139,18 +163,10 @@ void scale_filter_update(scale_filter_t *f, int32_t raw, int64_t now_us,
         double diff = f->ema - f->azt_anchor;
 
         if (fabs(diff) <= DEADBAND) {
-            /* Exactly zero while inside the deadband.
-             *
-             * The old code clamped the anchor to AZT_WINDOW when it overtook the
-             * reading, and AZT_WINDOW is the SAME constant as DEADBAND. So the
-             * anchor was parked precisely where the zero/non-zero decision is
-             * taken: 40.000000 counts reads as zero, 40.000001 reads as 0.09 g.
-             * Measured consequence - an empty platform sitting permanently at
-             * -0.10 g, with the ZERO indicator off and nothing on the scale.
-             *
-             * Snapping to the reading inside the deadband removes the stuck
-             * state entirely: the zero is exact, and a real load still moves the
-             * reading far outside the deadband so tracking resumes normally. */
+            /* Exactly zero while inside the deadband, so the last digit cannot
+             * flicker. The anchor is parked on the reading, and the wider window
+             * below is what lets it follow the platform once the reading steps
+             * outside. */
             f->azt_anchor = f->ema;
             f->azt_since_us = now_us;
         } else if (fabs(diff) <= AZT_WINDOW) {
@@ -158,11 +174,21 @@ void scale_filter_update(scale_filter_t *f, int32_t raw, int64_t now_us,
                 f->azt_since_us = now_us;
             } else if (now_us - f->azt_since_us >= AZT_HOLD_US) {
                 double dt = (double)(now_us - f->azt_since_us) / 1e6;
-                f->azt_anchor += AZT_RATE * dt;
-                if (fabs(f->ema - f->azt_anchor) > AZT_WINDOW) {
-                    /* never let the anchor run past the reading it chases */
-                    f->azt_anchor = f->ema - (f->ema > f->azt_anchor
-                                              ? AZT_WINDOW : -AZT_WINDOW);
+                /* Move the anchor TOWARD the reading.
+                 *
+                 * This used to be an unconditional `azt_anchor += AZT_RATE * dt`,
+                 * which walks the zero upward no matter which side of the anchor
+                 * the reading sits on. On a platform drifting down that pushes
+                 * the zero the wrong way, so the figure walked away instead of
+                 * coming back. The sign has to follow the reading. */
+                double step = AZT_RATE * dt;
+                f->azt_anchor += (f->ema > f->azt_anchor ? step : -step);
+                /* Stop on the reading rather than overshooting it. The old clamp
+                 * stopped at the window edge, which with a 400 count window would
+                 * park the display at 0.94 g instead of at zero. */
+                if ((diff > 0 && f->ema < f->azt_anchor) ||
+                    (diff < 0 && f->ema > f->azt_anchor)) {
+                    f->azt_anchor = f->ema;
                 }
                 f->azt_since_us = now_us;
             }
