@@ -441,14 +441,40 @@ function setChip(id, on) {
  * piling requests up also costs measurement quality. */
 var inFlight = false;
 
+/* A request given no deadline can hang forever, and a hung request here is fatal
+ * rather than merely slow.
+ *
+ * inFlight guards against piling requests up, and it is cleared in the last
+ * .then(). But that .then() only runs when the promise settles, and on a lossy
+ * link a fetch can sit without settling for as long as the browser's own
+ * timeout - tens of seconds. For all of that time every 1500 ms tick returns
+ * immediately at the guard above, so the page freezes on whatever it last
+ * showed and never recovers even once the link comes back. From the other side
+ * that is exactly "the interface does not open": the page loads, the numbers
+ * never move again, and a reload seems to be the only way out.
+ *
+ * Measured on this link: ping loss swings between 0% and 100% over minutes
+ * with nothing in the wifi log - the station stays associated and simply stops
+ * getting through. Stalled requests are the normal case here, not an edge case,
+ * so the deadline is mandatory rather than a nicety.
+ *
+ * Aborting at 4 s costs a couple of dropped readings during a bad patch, and
+ * the next tick simply tries again. */
+var POLL_TIMEOUT_MS = 4000;
+
 function poll() {
   if (inFlight) return;
   inFlight = true;
-  fetch('/api/weight', {cache: 'no-store'})
+  var ctl = new AbortController();
+  var timer = setTimeout(function () { ctl.abort(); }, POLL_TIMEOUT_MS);
+  fetch('/api/weight', {cache: 'no-store', signal: ctl.signal})
     .then(function (r) { return r.json(); })
     .then(paint)
     .catch(function () {})
-    .then(function () { inFlight = false; });
+    .then(function () {
+      clearTimeout(timer);
+      inFlight = false;
+    });
 }
 
 function tare() { resetAverage(); fetch('/api/tare', {method: 'POST'}).then(poll); }
