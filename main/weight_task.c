@@ -26,6 +26,16 @@ static const char *TAG = "weight";
 #define NVS_KEY_UNIT "unit"
 /* ~4.5 s of warm-up before the boot tare is taken. */
 #define BOOT_TARE_SETTLE_SAMPLES 51
+/* How far the platform may sit from the confirmed tare and still count as
+ * empty. ~2 g at 425.6 counts per gram. The resting point wanders about 0.6 g
+ * peak to peak, so this is about eight times the noise: an empty platform is
+ * never mistaken for a load, and every real reference is. */
+#define BOOT_TARE_TOLERANCE_COUNTS 851
+
+/* What NVS held at start-up, kept so the boot tare can tell an empty platform
+ * from a loaded one. */
+static int32_t nvs_tare_counts;
+static bool have_nvs_tare;
 
 #define NVS_MAGIC   0xAA55BEEF
 #define NVS_KEY_MAGIC "magic"
@@ -58,9 +68,31 @@ static bool nvs_load(scale_filter_t *f)
     uint8_t unit = 0;
     nvs_get_i32(h, NVS_KEY_TARE, &tare);
     nvs_get_u8(h, NVS_KEY_UNIT, &unit);
-    if (nvs_get_i32(h, NVS_KEY_CAL, (int32_t *)&cal) != ESP_OK || cal <= 0.0f) {
-        ESP_LOGW(TAG, "cal_factor missing or invalid, keeping default");
-        cal = 0.0f;
+
+    /* Read the calibration back the way it was written.
+     *
+     * nvs_save stores cal_factor with nvs_set_blob, because it is a float and the
+     * integer encodings of set_i32 are not worth relying on. This used to read it
+     * with nvs_get_i32, which fails on a blob-typed key with a type mismatch, so
+     * every boot logged "cal_factor missing or invalid" and fell back to the
+     * built-in default. The effect was silent and bad: a calibration performed
+     * with the m command was written, believed, and then thrown away on the next
+     * reboot, with nothing on screen to say so.
+     *
+     * The i32 path is kept as a fallback in case a partition was ever written by
+     * different code, but the blob is what this firmware has always written. */
+    size_t cal_len = sizeof(cal);
+    if (nvs_get_blob(h, NVS_KEY_CAL, &cal, &cal_len) != ESP_OK ||
+        cal_len != sizeof(cal) || cal <= 0.0f) {
+        int32_t cal_i32 = 0;
+        if (nvs_get_i32(h, NVS_KEY_CAL, &cal_i32) == ESP_OK && cal_i32 > 0) {
+            cal = (float)cal_i32;
+            ESP_LOGW(TAG, "cal_factor stored as integer, recovered %d",
+                     cal_i32);
+        } else {
+            ESP_LOGW(TAG, "cal_factor missing or invalid, keeping default");
+            cal = 0.0f;
+        }
     }
     nvs_close(h);
 
@@ -68,9 +100,26 @@ static bool nvs_load(scale_filter_t *f)
         f->cal_factor = cal;
     }
     f->tare_offset = tare;
+    /* The auto-zero anchor has to follow the tare, not the built-in default.
+     *
+     * scale_filter_init sets azt_anchor from the value passed to it, and the task
+     * passes the hard-coded 418857. Loading the real tare from NVS without moving
+     * the anchor left every reading on the boot biased by the difference between
+     * the two, and that difference grows as the stored tare drifts. Measured here:
+     * anchor 418878 against a stored tare of 419002, an offset of 124 counts,
+     * 293 mg, silently added to every weight shown.
+     *
+     * Verified afterwards by recomputing the anchor from the API as
+     * counts - value*cal_factor: it must land on the stored tare. */
+    f->azt_anchor = (double)tare;
+    f->azt_since_us = 0;
     f->unit = (scale_unit_t)(unit % 3);
-    ESP_LOGI(TAG, "loaded cal=%.2f tare=%d", (double)f->cal_factor,
-             (int)f->tare_offset);
+    /* Kept so the boot tare can tell an empty platform from a loaded one. See
+     * the block in the measurement task. */
+    nvs_tare_counts = tare;
+    have_nvs_tare = true;
+    ESP_LOGI(TAG, "loaded cal=%.2f tare=%d anchor=%d", (double)f->cal_factor,
+             (int)f->tare_offset, (int)f->azt_anchor);
     return true;
 }
 
@@ -156,20 +205,56 @@ static void measure_task(void *arg)
          * With external power there is no USB console to fall back on, so an
          * un-tared display is unrecoverable without reflashing. The spec asks for
          * boot auto-tare anyway. It waits for the median window to fill and then
-         * a settle period, because taring mid-warm-up would capture drift. */
+         * a settle period, because taring mid-warm-up would capture drift.
+         *
+         * But it must not tare a loaded platform. Observed 2026-10-10: with a
+         * 73 g reference sitting on the scale, a reboot tared the loaded level
+         * (450 023 counts) and the scale read a confident 0.000 g. A silent
+         * wrong number is far worse than a visibly wrong one - the user cannot
+         * see a zero that should have been 73, but they can see a -9.8 g that
+         * asks for a tare. So the boot tare only runs when the platform reads
+         * close to the tare the user last confirmed.
+         *
+         * Measured spread of the resting point with the platform untouched:
+         * about 0.6 g peak to peak, roughly 256 counts. A tolerance of 2 g is
+         * about eight times that, so a genuine empty platform is never mistaken
+         * for a load, and anything heavier than 2 g - which includes every real
+         * reference - is left alone.
+         *
+         * With nothing stored in NVS at all there is nothing to compare against,
+         * and the display would be meaningless, so it tares unconditionally. */
         if (tare_pending && filter.ema_valid) {
             settle_count++;
             if (settle_count > BOOT_TARE_SETTLE_SAMPLES) {
                 tare_pending = false;
                 xSemaphoreTake(lock, portMAX_DELAY);
-                /* Deliberately NOT saved to NVS. Writing on every boot would
-                 * burn the flash partition and would also make the stored tare
-                 * drift silently over time. TARE in memory is enough: the stored
-                 * value stays as the last value the user confirmed. */
-                scale_filter_tare(&filter, true);
-                ESP_LOGI(TAG, "boot auto-tare in memory at %ld counts "
-                              "(NVS keeps %ld)",
-                         (long)filter.tare_offset, (long)filter.tare_offset);
+                /* Compared against the EMA, not the raw count: scale_filter_tare
+                 * stores llround(f->ema), so the tare lives in EMA units. */
+                int32_t nvs_tare = nvs_tare_counts;
+                long drift = lround(filter.ema) - (long)nvs_tare;
+                if (!have_nvs_tare) {
+                    /* First run or erased flash: nothing to compare against. */
+                    scale_filter_tare(&filter, true);
+                    ESP_LOGW(TAG, "no stored tare, boot tared at %ld counts",
+                             (long)filter.tare_offset);
+                } else if (drift > -BOOT_TARE_TOLERANCE_COUNTS &&
+                           drift < BOOT_TARE_TOLERANCE_COUNTS) {
+                    /* Deliberately NOT saved to NVS. Writing on every boot would
+                     * burn the flash partition and would also make the stored
+                     * tare drift silently over time. TARE in memory is enough:
+                     * the stored value stays as the last the user confirmed. */
+                    scale_filter_tare(&filter, true);
+                    ESP_LOGI(TAG, "boot auto-tare %ld counts off the stored "
+                                  "tare, taken at %ld (NVS keeps %ld)",
+                             drift, (long)filter.tare_offset, (long)nvs_tare);
+                } else {
+                    ESP_LOGW(TAG, "NOT taring at boot: platform reads %ld counts "
+                                  "from the stored tare %ld, which is %.0f g - "
+                                  "looks like a load is on it. Display will show "
+                                  "that load; press TARE once it is removed.",
+                             drift, (long)nvs_tare,
+                             (double)drift / filter.cal_factor);
+                }
                 xSemaphoreGive(lock);
             }
         }
