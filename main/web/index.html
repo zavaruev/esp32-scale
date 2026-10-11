@@ -14,20 +14,31 @@
      The badge is Near-Black Tile 1, so it reads on both light and dark browser
      chrome.
 
-     The mark is the instrument itself, not an abstract glyph. Five candidates
-     were rendered and judged at 16, 20, 24, 32 and 48 px on light and dark,
-     rather than read off the markup, and three earlier rounds were rejected the
-     same way: a load on a bar read as a cone or a bell, a balance beam
-     collapsed into a thin cross with invisible pans, and a dial gauge read as a
-     pressure gauge, which is a different instrument.
+     The mark is a balance scale: beam, two pans, post, base. Two rounds of
+     candidates were rendered and judged rather than read off the markup, and
+     this is the third design to be adopted and the fourth to be rejected.
 
-     What makes this one say "scales" is the combination - blue platform across
-     the top, body below it, a display window, and two feet. Platform and feet
-     are the two cues that survive being scaled down to 16 px; the display window
-     is what makes it an instrument rather than a box, and the feet are what
-     stop it reading as a washing machine. A housing without feet was tried and
-     dropped for exactly that reason. -->
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23272729'/%3E%3Crect x='5' y='6' width='22' height='3' rx='1.5' fill='%232997ff'/%3E%3Crect x='8' y='11' width='16' height='12' rx='2' fill='%23fff'/%3E%3Crect x='11' y='15' width='10' height='4' rx='.8' fill='%23272729'/%3E%3Crect x='8' y='25' width='5' height='3.5' rx='1.75' fill='%23fff'/%3E%3Crect x='19' y='25' width='5' height='3.5' rx='1.75' fill='%23fff'/%3E%3C/svg%3E">
+     What decided it was looking at the honest raster. Judging a 16 px icon in
+     the browser is misleading, because the eye sees the smoothed version. Each
+     candidate was rendered to a real 16x16 bitmap and then enlarged without
+     interpolation, so what was on screen was what a tab bar would get. That
+     immediately showed the rule everything here had been breaking: at 16 px
+     only two or three large shapes survive. A load on a bar lost its handle
+     and became a bell; a body with a display became a small monitor; a housing
+     with feet became a washing machine; a load above a platform became a
+     mushroom. Every one of them was fine at 48 px and useless at 16.
+
+     The balance survives because it is three big shapes - a wide beam, two
+     broad pans, a post and a base - and because the silhouette is one of the
+     most widely reproduced images there is. Rejected in this round: everything
+     in a single colour (the base merges with the post into a blob), white pans
+     on a blue frame (the pans float), and a tilted beam (the tilt is below one
+     pixel and reads as a mistake).
+
+     The post starts under the beam rather than running through it. Drawn full
+     height it split the beam in two at 24 px and above, which turned the
+     strongest element into two weak ones. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns=&#39;http://www.w3.org/2000/svg&#39;%20viewBox=&#39;0%200%2032%2032&#39;%3E%3Crect%20width=&#39;32&#39;%20height=&#39;32&#39;%20rx=&#39;7&#39;%20fill=&#39;%23272729&#39;/%3E%3Crect%20x=&#39;3&#39;%20y=&#39;6.6&#39;%20width=&#39;26&#39;%20height=&#39;3.8&#39;%20rx=&#39;1.9&#39;%20fill=&#39;%232997ff&#39;/%3E%3Cpath%20d=&#39;M3.2%2010.4h10.6l-5.3%209z&#39;%20fill=&#39;%232997ff&#39;/%3E%3Cpath%20d=&#39;M18.2%2010.4h10.6l-5.3%209z&#39;%20fill=&#39;%232997ff&#39;/%3E%3Crect%20x=&#39;14.2&#39;%20y=&#39;10.4&#39;%20width=&#39;3.6&#39;%20height=&#39;10.8&#39;%20fill=&#39;%23fff&#39;/%3E%3Crect%20x=&#39;7&#39;%20y=&#39;20.8&#39;%20width=&#39;18&#39;%20height=&#39;4.8&#39;%20rx=&#39;2.4&#39;%20fill=&#39;%23fff&#39;/%3E%3C/svg%3E">
 
 <!-- Theme applied before the first paint. This has to run in <head>: a script
      at the end of the body would let the light background paint first and then
