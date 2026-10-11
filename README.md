@@ -89,6 +89,10 @@ the moment of writing `http://192.168.22.123/`.
 - Every 1500 ms the device is polled and the reading updates.
 - **Zero** is the tare button.
 - **Auto-zero** turns the zero-tracking on and off.
+- The moon/sun button in the top bar switches between day and night. The choice
+  is kept in `localStorage`, so it belongs to the browser and to this origin: a
+  different DHCP lease on the instrument loses it and the page falls back to the
+  system preference.
 
 If the device is connected but the address is not that one, look at the serial
 console — it prints the address it was given.

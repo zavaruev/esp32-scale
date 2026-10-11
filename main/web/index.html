@@ -4,6 +4,38 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ESP32 Scale</title>
+
+<!-- Icon inline as an SVG data URI, on purpose.
+     A separate /favicon.ico would be one more HTTP request, and this link loses
+     anywhere from 0 to 100 % of its packets - requests are the expensive thing
+     here, not bytes. This costs about 280 bytes inside a page that gzips to
+     5 012.
+
+     The badge is Near-Black Tile 1, so it reads on both light and dark browser
+     chrome, and it takes only two shapes so it survives being scaled to 16 px.
+
+     The weight is a trapezoid, and that is not a detail: the first attempt was
+     a dome - flat bottom, arched top - which at 32 px and up read as a bell or a
+     mailbox, not as a load. A trapezoid, wider at the bottom, is the shape that
+     says "weight" at a glance. A carrying handle was tried and dropped: at 16 px
+     it collapses into a smudge and the plain trapezoid stays legible. Both were
+     checked rendered at 16, 24, 32 and 64 px on light and dark backgrounds. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23272729'/%3E%3Crect x='5' y='21.5' width='22' height='3' rx='1.5' fill='%232997ff'/%3E%3Cpath d='M13 8h6l4 13.5h-14z' fill='%23fff'/%3E%3C/svg%3E">
+
+<!-- Theme applied before the first paint. This has to run in <head>: a script
+     at the end of the body would let the light background paint first and then
+     flip, which reads as a flash. Two lines, no dependencies. -->
+<script>
+(function () {
+  var t;
+  try { t = localStorage.getItem('scale-theme'); } catch (e) { t = null; }
+  if (t !== 'dark' && t !== 'light') {
+    t = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches
+        ? 'dark' : 'light';
+  }
+  document.documentElement.dataset.theme = t;
+})();
+</script>
 <style>
 /* Tokens are copied verbatim from DESIGN.md, which is an extracted Apple design
    system. Editing them here means editing the design system, not the page. */
@@ -16,12 +48,55 @@
   --tile:#272729;             /* Near-Black Tile 1 */
   --ink:#1d1d1f;
   --muted80:#333333;
-  --muted48:#7a7a7a;
+  --muted48:#6e6e73;
   --hairline:#e0e0e0;
   --soft:#f0f0f0;
   --pill:9999px; --sm:8px; --md:11px; --lg:18px;
   --product-shadow:0 3px 30px rgba(0,0,0,.22);
+
+  /* Chip colours live here because they need to change with the theme, and a
+     bare opacity on the element dims the border as well as the text. */
+  --chip-off:#9a9aa0;
+  --chip-off-line:rgba(255,255,255,.30);
+  --chip-on:#2997ff;
+  --chip-on-line:#2997ff;
 }
+
+/* Night mode. Only the roles change - no component rule below knows which theme
+ * it is in, which is the whole point of doing it through custom properties.
+ *
+ * Every value is a token DESIGN.md already contains. Pure Black is documented
+ * as "reserved for true void", Tile 2 as a micro-step lighter than Tile 1, Body
+ * On Dark as the text tone on dark surfaces and Body Muted (#cccccc) as
+ * secondary copy there. Nothing new was invented for the dark palette.
+ *
+ * --primary deliberately stays Action Blue. It is the fill under white button
+ * text, and white on Sky Link Blue is 3.02:1 - a fail. Sky Link Blue is used
+ * for TEXT on dark surfaces, which is precisely what the design system says it
+ * is for: "for dark surfaces where Action Blue would disappear". */
+:root[data-theme="dark"]{
+  --canvas:#000000;           /* Pure Black */
+  --parchment:#2a2a2c;       /* Near-Black Tile 2 */
+  --tile:#1c1c1e;            /* a shade below Tile 1, for the hero to sit forward */
+  --ink:#ffffff;             /* Body On Dark */
+  --muted80:#cccccc;         /* Body Muted */
+  --muted48:#98989d;
+  --hairline:#3a3a3c;
+  --soft:#262628;
+  --chip-off:#8e8e93;
+  --chip-off-line:rgba(255,255,255,.20);
+  --chip-on:#2997ff;
+  --chip-on-line:#2997ff;
+  /* The focus ring has to stay visible on black; Focus Blue at 2.6:1 on white
+     becomes 3.4:1 here, which is enough for a non-text indicator. */
+  --primary-focus:#2997ff;
+}
+
+/* The hero tile is the product render and is dark in BOTH themes, so the theme
+   only changes the page around it. That follows DESIGN.md's "photography-first
+   presentation, UI recedes": the dark tile with the reading on it is the one
+   element that does not move. */
+
 *{margin:0;padding:0;box-sizing:border-box;-webkit-font-smoothing:antialiased}
 body{
   font-family:"SF Pro Text",system-ui,-apple-system,BlinkMacSystemFont,
@@ -36,10 +111,27 @@ body{
 /* DESIGN.md: the global nav is the only true-black element on most pages. */
 .nav{
   background:#000;height:44px;display:flex;align-items:center;
-  justify-content:center;
+  justify-content:center;position:relative;
   font-family:system-ui,-apple-system,sans-serif;font-weight:400;
   font-size:12px;line-height:1;letter-spacing:-.12px;color:#fff;
 }
+/* Absolutely positioned so the title stays truly centred no matter how wide the
+   toggle is - the alternative, padding the bar to make room, shifts the title
+   whenever the glyph changes. The nav is Pure Black in both themes and the glyph
+   is white on it, so neither needs a theme rule. */
+.nav-toggle{
+  position:absolute;right:8px;top:50%;transform:translateY(-50%);
+  width:30px;height:30px;padding:0;border:0;border-radius:var(--pill);
+  background:transparent;cursor:pointer;color:#fff;
+  display:flex;align-items:center;justify-content:center;
+}
+.nav-toggle svg{width:17px;height:17px;display:block}
+.nav-toggle:hover{background:rgba(255,255,255,.12)}
+.nav-toggle:focus-visible{outline:2px solid #2997ff;outline-offset:1px}
+.nav-toggle .ico-moon{display:block}
+.nav-toggle .ico-sun{display:none}
+:root[data-theme="dark"] .nav-toggle .ico-moon{display:none}
+:root[data-theme="dark"] .nav-toggle .ico-sun{display:block}
 
 /* Full-bleed tiles, never rounded. The colour change IS the divider, so there
    must be no gap and no border between them. */
@@ -81,14 +173,22 @@ body{
 }
 
 .chips{margin-top:40px;display:flex;gap:12px;justify-content:center}
+/* Contrast of the off state used to be white at opacity .4, which measured
+   3.63:1 on the tile - under the 4.5:1 floor for 12 px text. Opacity was also
+   the wrong mechanism: it dimmed the border along with the text, so the
+   outline of an inactive chip was fainter than the outline of an active one.
+   Both are now chosen values, and both are theme-aware.
+   Note that brightness cannot carry the on/off distinction on its own: the off
+   grey is 4.86:1 and the on blue is 4.94:1. The distinction is carried by
+   colour and by the border, which is the honest way to do it. */
 .chip{
   font-family:system-ui,-apple-system,sans-serif;font-weight:400;
   font-size:12px;line-height:1;letter-spacing:-.12px;
   padding:7px 14px;border-radius:var(--pill);
-  border:1px solid rgba(255,255,255,.3);color:#fff;opacity:.4;
-  transition:opacity .18s,border-color .18s;
+  border:1px solid var(--chip-off-line);color:var(--chip-off);
+  transition:color .18s,border-color .18s;
 }
-.chip.on{opacity:1;border-color:var(--primary-on-dark);color:var(--primary-on-dark)}
+.chip.on{border-color:var(--chip-on-line);color:var(--chip-on)}
 
 /* Buttons. Pill radius is the brand action signal; active state is
    scale(0.95) on every one of them. */
@@ -175,7 +275,27 @@ footer{
 </head>
 <body>
 
-<div class="nav">ESP32 Scale</div>
+<div class="nav">
+  <span>ESP32 Scale</span>
+  <!-- Two inline SVGs, one shown per theme. A text glyph would be cheaper still,
+       but the point of the icon set is that the tab, the favicon and this
+       toggle look like the same family. -->
+  <button class="nav-toggle" id="theme-toggle" onclick="toggleTheme()"
+          aria-label="Switch appearance">
+    <svg class="ico-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+         aria-hidden="true">
+      <path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a7 7 0 0 0 10.7 10.7z"/>
+    </svg>
+    <svg class="ico-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="4.2"/>
+      <path d="M12 2.4v2.2M12 19.4v2.2M2.4 12h2.2M19.4 12h2.2
+               M5.2 5.2l1.6 1.6M17.2 17.2l1.6 1.6
+               M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6"/>
+    </svg>
+  </button>
+</div>
 
 <!-- Hero. Weight dominates; everything else is quiet, per DESIGN.md's
      "photography-first presentation, UI recedes". -->
@@ -326,6 +446,29 @@ function unitInfo(code) {
 }
 
 function resetAverage() { hist = []; locked = false; quiet = 0; candidate = null; }
+
+/* Day / night.
+ *
+ * The choice is kept in localStorage rather than in the device. It costs nothing
+ * on the firmware and needs no flash; the price is that it is tied to this
+ * browser and this origin, so a different DHCP lease on the instrument would
+ * lose it and fall back to the system preference.
+ *
+ * localStorage can throw, not only when it is full but when the page is opened
+ * in a context that forbids it. A scale on a bench is the sort of thing that
+ * gets opened from odd places, so the failure is caught and the theme still
+ * switches for the session. */
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  var b = document.getElementById('theme-toggle');
+  if (b) b.setAttribute('aria-label', t === 'dark' ? 'Switch to day' : 'Switch to night');
+}
+
+function toggleTheme() {
+  var t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  applyTheme(t);
+  try { localStorage.setItem('scale-theme', t); } catch (e) { /* session only */ }
+}
 
 /* Returns the figure to display, in grams. */
 function holdOrShow(grams, stable) {
