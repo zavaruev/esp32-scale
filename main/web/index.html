@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -153,7 +153,7 @@ body{
 
 /* A button that reflects a persistent machine state shows that state without
    competing with the primary action. DESIGN.md allows one solid accent per
-   screen, and filling a second button in the same row made "Обнулить" stop
+   screen, and filling a second button in the same row made "Zero" stop
    reading as the primary action. A tinted background with accent text says
    "engaged" just as clearly and leaves the hierarchy intact. */
 .btn.state-on{
@@ -180,49 +180,49 @@ footer{
 <!-- Hero. Weight dominates; everything else is quiet, per DESIGN.md's
      "photography-first presentation, UI recedes". -->
 <div class="tile tile-dark">
-  <div class="tagline">Точный вес</div>
-  <div><span class="hero"><span id="weight">0.00</span><span class="hero-unit" id="unit">г</span></span></div>
+  <div class="tagline">Precision scale</div>
+  <div><span class="hero"><span id="weight">0.00</span><span class="hero-unit" id="unit">g</span></span></div>
   <div class="chips">
     <span class="chip" id="chip-stable">STABLE</span>
     <span class="chip" id="chip-zero">ZERO</span>
     <span class="chip" id="chip-tare">TARE</span>
     <span class="chip" id="chip-avg">AVG</span>
-    <span class="chip" id="chip-lock">ФИКС</span>
+    <span class="chip" id="chip-lock">HOLD</span>
   </div>
 </div>
 
 <!-- Actions live on parchment, which is the colour change acting as divider. -->
 <div class="tile tile-parchment" style="padding:48px 20px">
   <div class="actions">
-    <button class="btn btn-primary" onclick="tare()">Обнулить</button>
-    <button class="btn btn-ghost" id="btn-azt" onclick="toggleAzt()">Авто-ноль</button>
-    <button class="btn btn-ghost" onclick="openCal()">Калибровка</button>
+    <button class="btn btn-primary" onclick="tare()">Zero</button>
+    <button class="btn btn-ghost" id="btn-azt" onclick="toggleAzt()">Auto-zero</button>
+    <button class="btn btn-ghost" onclick="openCal()">Calibrate</button>
   </div>
 </div>
 
 <div class="tile" style="padding:0 20px 20px">
   <div class="card cal-panel" id="cal-panel">
-    <div class="label">Мастер калибровки</div>
-    <div class="cal-step" id="cal-step">Нажмите «Начать», затем выполните шаги по порядку.</div>
+    <div class="label">Calibration wizard</div>
+    <div class="cal-step" id="cal-step">Press Start, then follow the steps in order.</div>
     <div class="cal-bar"><span id="cal-bar"></span></div>
     <div class="cal-row" id="cal-mass-row">
       <input class="cal-input" id="cal-mass" type="number" step="0.01"
              min="0.1" value="73.03" inputmode="decimal">
-      <span style="font-size:14px;color:var(--muted48)">г — масса эталона</span>
+      <span style="font-size:14px;color:var(--muted48)">g — reference mass</span>
     </div>
     <div class="cal-row" style="margin-top:14px">
-      <button class="btn btn-primary" id="cal-go" onclick="startCal()">Начать</button>
-      <button class="btn btn-ghost" onclick="calMeasureOnly()">Только измерить</button>
+      <button class="btn btn-primary" id="cal-go" onclick="startCal()">Start</button>
+      <button class="btn btn-ghost" onclick="calMeasureOnly()">Measure only</button>
     </div>
   </div>
 </div>
 
 <div class="tile" style="padding:48px 20px">
   <div class="card">
-    <div class="label">Единицы измерения</div>
+    <div class="label">Units</div>
     <div class="units">
-      <button class="btn btn-ghost" data-code="g"  onclick="setUnit(0)">г</button>
-      <button class="btn btn-ghost" data-code="kg" onclick="setUnit(1)">кг</button>
+      <button class="btn btn-ghost" data-code="g"  onclick="setUnit(0)">g</button>
+      <button class="btn btn-ghost" data-code="kg" onclick="setUnit(1)">kg</button>
       <button class="btn btn-ghost" data-code="oz" onclick="setUnit(2)">oz</button>
     </div>
   </div>
@@ -230,16 +230,16 @@ footer{
 
 <div class="tile" style="padding:0 20px 64px">
   <div class="card">
-    <div class="label">Диагностика</div>
-    <div class="kv"><span>Сырой отсчёт</span><b id="d-counts">—</b></div>
-    <div class="kv"><span>Шум σ</span><b id="d-sigma">—</b></div>
+    <div class="label">Diagnostics</div>
+    <div class="kv"><span>Raw count</span><b id="d-counts">—</b></div>
+    <div class="kv"><span>Noise σ</span><b id="d-sigma">—</b></div>
     <div class="kv"><span>cal_factor</span><b id="d-cal">—</b></div>
     <div class="kv"><span>tare_offset</span><b id="d-tare">—</b></div>
-    <div class="kv"><span>Время работы</span><b id="d-up">—</b></div>
+    <div class="kv"><span>Uptime</span><b id="d-up">—</b></div>
   </div>
 </div>
 
-<footer>ESP32-S3 · HX711 · калибровка по эталону</footer>
+<footer>ESP32-S3 · HX711 · reference calibration</footer>
 
 <script>
 /* Resolution decided 2026-10-07: 0.05 g at rest. The filter can do it, and the
@@ -254,8 +254,8 @@ var step = 0.05;
    The average is kept in grams regardless of what is selected: averaging mixed
    scales inside one window would be meaningless. */
 var UNITS = [
-  {code: 'g',  label: '\u0433',  per: 1,            decimals: 2},
-  {code: 'kg', label: '\u043a\u0433', per: 1000,         decimals: 3},
+  {code: 'g',  label: 'g',  per: 1,            decimals: 2},
+  {code: 'kg', label: 'kg', per: 1000,         decimals: 3},
   {code: 'oz', label: 'oz', per: 28.349523125, decimals: 3}
 ];
 
@@ -288,7 +288,7 @@ var calPhase = 'idle';
  * a quarter of the time.
  *
  * Note what this does NOT buy: a trustworthy 0.01 g digit. At 16 mg the last
- * digit is still noise-dominated. The hold (ФИКС) is what makes the figure
+ * digit is still noise-dominated. The hold (HOLD) is what makes the figure
  * steady, and the honest resolution of this instrument remains 0.05 g. */
 var AVG_N = 2;
 var hist = [];
@@ -406,11 +406,11 @@ function paint(s) {
   setChip('chip-lock', locked);
 
   document.getElementById('d-counts').textContent = s.counts;
-  document.getElementById('d-sigma').textContent = s.sigma_mg.toFixed(0) + ' \u043c\u0433';
+  document.getElementById('d-sigma').textContent = s.sigma_mg.toFixed(0) + ' mg';
   document.getElementById('d-cal').textContent = s.cal.toFixed(2);
   document.getElementById('d-tare').textContent = s.tare_offset;
   document.getElementById('d-up').textContent =
-      Math.floor(s.uptime / 60) + ' \u043c\u0438\u043d';
+      Math.floor(s.uptime / 60) + ' min';
 
   /* Auto-zero is a persistent machine state, so its button is lit while it is
      on. Without this the operator could not tell whether it was still armed -
@@ -418,7 +418,7 @@ function paint(s) {
      the page. */
   var b = document.getElementById('btn-azt');
   b.classList.toggle('state-on', !!s.azt);
-  b.textContent = s.azt ? '\u0410\u0432\u0442\u043e-\u043d\u043e\u043b\u044c \u0432\u043a\u043b' : '\u0410\u0432\u0442\u043e-\u043d\u043e\u043b\u044c \u0432\u044b\u043a\u043b';
+  b.textContent = s.azt ? 'Auto-zero on' : 'Auto-zero off';
 
   if (s.unit !== lastUnit) {
     lastUnit = s.unit;
@@ -502,12 +502,12 @@ function openCal() {
 }
 
 var CAL_TEXT = {
-  idle:      ['\u0413\u043e\u0442\u043e\u0432 \u043a \u043a\u0430\u043b\u0438\u0431\u0440\u043e\u0432\u043a\u0435.', 0],
-  settling:  ['\u0421\u043d\u0438\u043c\u0430\u0435 \u043c\u0430\u0441\u0441\u0443 \u0441 \u043f\u043b\u0430\u0442\u0444\u043e\u0440\u043c\u044b \u0438 \u043d\u0435 \u043a\u0430\u0441\u0430\u0439\u0441\u044c\u0442\u0435\u0441\u044c. \u041e\u0442\u043e\u0436\u0434\u0438\u0442\u0435\u0441\u044c \u043f\u043e\u043a\u0430 \u043f\u043b\u0430\u0442\u0444\u043e\u0440\u043c\u0430.', 10],
-  wait_load: ['\u041f\u043e\u0441\u0442\u0430\u0432\u044c\u0442\u0435 \u044d\u0442\u0430\u043b\u043e\u043d.', 40],
-  measuring: ['\u0418\u0437\u043c\u0435\u0440\u0435\u043d\u0438\u0435 \u0433\u0440\u0443\u0437\u0430.', 80],
-  done:     ['\u0413\u043e\u0442\u043e\u0432\u043e.', 100],
-  abort:    ['\u041f\u0440\u0435\u0440\u0432\u0430\u043d\u043e.', 100]
+  idle:      ['Ready to calibrate.', 0],
+  settling:  ['Taking the tare. The platform must be empty and still.', 10],
+  wait_load: ['Place the reference.', 40],
+  measuring: ['Measuring the load.', 80],
+  done:     ['Done.', 100],
+  abort:    ['Cancelled.', 100]
 };
 
 function setCalStep(phase, text) {
@@ -537,16 +537,16 @@ function pollCal() {
     .then(function (c) {
       var text = null;
       if (c.phase === 'settling') {
-        text = 'Снимаем тару. Отсчёт ' + (c.elapsed_ms / 1000).toFixed(0) +
-               ' с \u2014 платформа должна быть пустой и неподвижной.';
+        text = 'Taking the tare. Elapsed ' + (c.elapsed_ms / 1000).toFixed(0) +
+               ' s - the platform must be empty and still.';
       } else if (c.phase === 'measuring') {
-        text = 'Измерение груза, усредняем 20 с. Не трогайте платформу.';
+        text = 'Measuring the load, averaging for 20 s. Do not touch the platform.';
       } else if (c.phase === 'done') {
-        text = c.detail + '   \u0394 ' + c.delta.toFixed(0) + ' \u043e\u0442\u0441. ' +
-               '\u0418\u0437\u043c\u0435\u0440\u0435\u043d\u043e ' + c.grams.toFixed(3) + ' \u0433' +
-               (c.new_cal ? ', \u043d\u043e\u0432\u044b\u0439 cal_factor ' + c.new_cal.toFixed(2) +
-                           (c.saved ? ' \u0437\u0430\u043f\u0438\u0441\u0430\u043d' : ' (\u043d\u0435 \u0437\u0430\u043f\u0438\u0441\u0430\u043d)')
-                          : ' \u2014 \u043a\u043e\u044d\u0444\u0444\u0438\u0446\u0438\u0435\u043d\u0442 \u043d\u0435 \u043c\u0435\u043d\u044f\u043b\u0441\u044f');
+        text = c.detail + '   delta ' + c.delta.toFixed(0) + ' counts. ' +
+               'Measured ' + c.grams.toFixed(3) + ' g' +
+               (c.new_cal ? ', new cal_factor ' + c.new_cal.toFixed(2) +
+                           (c.saved ? ' saved' : ' (not saved)')
+                          : ' - coefficient unchanged');
         poll();
       }
       setCalStep(c.phase, text);

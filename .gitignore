@@ -31,5 +31,5 @@ __pycache__/
 /.playwright-mcp/
 /preview.html
 
-# Локальные настройки с паролем WiFi — никогда в репозиторий
+# Local WiFi password settings - never commit these
 main/credentials.h

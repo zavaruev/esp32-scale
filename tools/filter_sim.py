@@ -159,7 +159,7 @@ def summarise(label, samples, expect_g=None, samples_for_step=None):
     res = step(samples)
     tail = [r for r in res if r["display"] is not None]
     if not tail:
-        print(f"{label}: нет данных")
+        print(f"{label}: no data")
         return None
 
     disp = [r["display"] for r in tail]
@@ -168,11 +168,11 @@ def summarise(label, samples, expect_g=None, samples_for_step=None):
     stable_pct = 100.0 * sum(1 for r in tail if r["stable"]) / len(tail)
 
     print(f"--- {label} ---")
-    print(f"  показание     : {med:9.3f} г  (разброс {sd*1000:.1f} мг)")
+    print(f"  reading       : {med:9.3f} g  (spread {sd*1000:.1f} mg)")
     if expect_g is not None:
         err = med - expect_g
-        print(f"  ожидалось     : {expect_g:9.3f} г   ОШИБКА {err:+.3f} г")
-    print(f"  индикатор     : STABLE {stable_pct:.0f}% времени, "
+        print(f"  expected      : {expect_g:9.3f} g   ERROR {err:+.3f} g")
+    print(f"  indicators    : STABLE {stable_pct:.0f}% of the time, "
           f"ZERO {100.0*sum(1 for r in tail if r['zero'])/len(tail):.0f}%")
     print()
     return med
@@ -182,20 +182,20 @@ def main():
     cf = CAL_FACTOR
     to = TARE_OFFSET
     print()
-    print(f"Модель: median({MEDIAN_N}) -> EMA(alpha {ALPHA_STEADY}/{ALPHA_FAST}) "
-          f"-> AZT({AZT_WINDOW_COUNTS:.0f} отч/{AZT_HOLD_S}с) "
-          f"-> deadband({DEADBAND_COUNTS:.0f} отч)")
-    print(f"Пороги: static={DELTA_STATIC:.0f} dynamic={DELTA_DYNAMIC:.0f} отсчётов")
-    print(f"STABLE: sigma {STABLE_SIGMA_COUNTS:.0f} отсчётов на {STABLE_WINDOW} "
-          f"сырых отсчётах")
+    print(f"Model: median({MEDIAN_N}) -> EMA(alpha {ALPHA_STEADY}/{ALPHA_FAST}) "
+          f"-> AZT({AZT_WINDOW_COUNTS:.0f} counts/{AZT_HOLD_S}s) "
+          f"-> deadband({DEADBAND_COUNTS:.0f} counts)")
+    print(f"Thresholds: static={DELTA_STATIC:.0f} dynamic={DELTA_DYNAMIC:.0f} counts")
+    print(f"STABLE: sigma {STABLE_SIGMA_COUNTS:.0f} counts over {STABLE_WINDOW} "
+          f"raw samples")
     print()
 
     specs = [
-        ("logs/v2_tare1.log", 0.0, "тара, платформа пуста"),
-        ("logs/v2_tare2.log", 0.0, "тара повторно (гистерезис)"),
-        ("logs/v2_ref_coins.log", 30.63, "монеты 30.63 г"),
-        ("logs/v2_ref_jar.log", 161.41, "банка 161.41 г"),
-        ("logs/v3_1327g.log", 1327.0, "кухонные 1327 г"),
+        ("logs/v2_tare1.log", 0.0, "tare, platform empty"),
+        ("logs/v2_tare2.log", 0.0, "tare taken again (hysteresis)"),
+        ("logs/v2_ref_coins.log", 30.63, "coins 30.63 g"),
+        ("logs/v2_ref_jar.log", 161.41, "jar 161.41 g"),
+        ("logs/v3_1327g.log", 1327.0, "kitchen scale 1327 g"),
     ]
 
     results = {}
@@ -203,7 +203,7 @@ def main():
         try:
             samples = load(path)
         except FileNotFoundError:
-            print(f"--- {label} --- ПРОПУЩЕН, нет {path}")
+            print(f"--- {label} --- SKIPPED, no {path}")
             print()
             continue
         results[label] = summarise(label, samples, expect)
