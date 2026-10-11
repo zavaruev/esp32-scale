@@ -1,510 +1,510 @@
 # AGENTS.md — ESP32_Scale
 
-Высокоточные электронные весы на ESP32-S3. Custom firmware, ESP-IDF, НЕ ESPHome.
-Состояние: **этап 1 закрыт**, железо признано пригодным.
+High-precision electronic scale on ESP32-S3. Custom firmware, ESP-IDF, NOT ESPHome.
+Status: **stage 1 closed**, the hardware is judged usable.
 
-## Быстрый старт
+## Quick start
 
 ```bash
-source ~/esp-idf/export.sh        # idf.py не в PATH без этого
+source ~/esp-idf/export.sh        # idf.py is not in PATH without this
 cd ~/ESP32_Scale
 idf.py build
 PORT=/dev/serial/by-id/usb-1a86_USB_Single_Serial_595B069397-if00
-idf.py -p "$PORT" -b 460800 flash  # 921600 ненадёжен на CH9102
+idf.py -p "$PORT" -b 460800 flash  # 921600 is unreliable on the CH9102
 
 stty -F "$PORT" 115200 raw -echo && timeout 40 cat "$PORT" > logs/run.log
 python tools/analyze_stage1.py logs/run.log --cal-factor 425.2
 ```
 
-Подробности замеров и разбор граблей — `docs/stage1-findings.md`.
-Даташит микросхемы лежит рядом: `docs/hx711_english.pdf`.
+Details of the measurements and a write-up of the gotchas — `docs/stage1-findings.md`.
+The chip's datasheet is right next to it: `docs/hx711_english.pdf`.
 
-## Распиновка HX711
+## HX711 pinout
 
 DT → GPIO16, SCK → GPIO17, VCC → **3V3**, GND → GND.
-Ячейка: E+ чёрный, E- красный, A- зелёный, A+ белый, экран жёлтый на GND.
-Нагрузка строго в центр платформы.
+Load cell: E+ black, E- red, A- green, A+ white, shield yellow to GND.
+Load strictly in the centre of the platform.
 
-**Почему 3.3 V, а не 5 V:** HX711 выдаёт на DOUT уровень своего питания. При 5 V
-на GPIO16 ESP32-S3 прилетит 5 V, что ему недопустимо.
+**Why 3.3 V and not 5 V:** HX711 drives DOUT at the level of its own supply. With
+5 V, 5 V arrives at GPIO16 of the ESP32-S3, which is unacceptable to it.
 
-## Калибровка (2 эталона в одной сессии, 2026-10-07)
+## Calibration (2 references in one session, 2026-10-07)
 
-| Эталон | Дельта отсчётов | `cal_factor` |
+| Reference | Count delta | `cal_factor` |
 |---|---|---|
-| Банка **161.41 г** (аптечные весы) | 68 692 ±4.7 | **425.57** ±0.03 |
-| Монеты **30.63 г** (аптечные весы) | 13 014 ±70.6 | **424.86** ±2.31 |
+| Jar **161.41 g** (pharmacy scale) | 68 692 ±4.7 | **425.57** ±0.03 |
+| Coins **30.63 g** (pharmacy scale) | 13 014 ±70.6 | **424.86** ±2.31 |
 
-**`cal_factor` = 425.2 отсчёта/г**, точность ±0.01% по банке. Расхождение между
-эталонами 0.6% — прибор и крепление в порядке. Логи: `logs/v2_*.log`.
+**`cal_factor` = 425.2 counts/g**, accuracy ±0.01% on the jar. The discrepancy
+between the references is 0.6% — the instrument and its mounting are fine. Logs: `logs/v2_*.log`.
 
-| Точка | Медиана | σ |
+| Point | Median | σ |
 |---|---|---|
-| Тара-1 | 418 815 | 55.1 |
-| Банка | 487 502 | 45.3 |
-| Монеты | 431 775 | 44.5 |
-| Тара-2 | 418 749 | 85.9 |
+| Tare-1 | 418 815 | 55.1 |
+| Jar | 487 502 | 45.3 |
+| Coins | 431 775 | 44.5 |
+| Tare-2 | 418 749 | 85.9 |
 
-- **`tare_offset` = 418 815 отсчётов** (пластина на месте, платформа пуста)
-- **Уход тары −66 отсчётов = −0.16 г → гистерезиса нет**
-- 1 отсчёт = **2.35 мг**
-- 6 кг = 2.55 млн из 8.39 млн = **30% диапазона HX711**, запас большой
+- **`tare_offset` = 418 815 counts** (plate in place, platform empty)
+- **Tare walk-off −66 counts = −0.16 g → no hysteresis**
+- 1 count = **2.35 mg**
+- 6 kg = 2.55 million of 8.39 million = **30% of the HX711 range**, plenty of headroom
 
-### ⚠️ Прежние 871 отсчёт/г были ошибочны вдвое
+### ⚠️ The earlier 871 counts/g were wrong by a factor of two
 
-Первый замер делил дельту на **15 г**, взятые по памяти как вес 5 монет по 5 рублей.
-На самом деле 5 монет весят **30.63 г**. Ошибка была ровно двукратной, из-за чего все
-расчёты точности занижали разрешение вдвое.
+The first measurement divided the delta by **15 g**, taken from memory as the
+weight of 5 coins of 5 rubles each. In reality 5 coins weigh **30.63 g**. The error was
+exactly twofold, which made every accuracy calculation understate the resolution by a factor of two.
 
-**Массу эталона никогда не брать по памяти или по номиналу — только взвешивать.**
-Второй эталон в той же сессии поймал ошибку; с одним эталоном она ушла бы в прошивку.
+**Never take the mass of a reference from memory or from its denomination — only weigh it.**
+The second reference in the same session caught the error; with a single reference it would have gone into the firmware.
 
-### Требование к рабочему эталону
+### Requirement for a working reference
 
-Аптечные весы: предел **200 г**, дискретность 0.01 г. Кухонные: 1327 г, заявлено 1 г,
-**фактически ±1 г** (два замера одной массы разошлись на 0.72 г).
+Pharmacy scale: limit **200 g**, resolution 0.01 g. Kitchen scale: 1327 g, specified as 1 g,
+**in fact ±1 g** (two measurements of the same mass differed by 0.72 g).
 
-Ни один прибор не закрывает обе задачи: аптечные точны (0.01%), но малы (3.3%
-диапазона); кухонные крупны (22%), но грубы (0.054%). Рабочая схема:
+Neither instrument covers both tasks: the pharmacy scale is accurate (0.01%) but
+small (3.3% of range); the kitchen scale is large (22%) but coarse (0.054%). Working scheme:
 
-- **`cal_factor` = 425.2 задают аптечные весы** по эталону 161 г
-- **1327 г на кухонных проверяет верх диапазона**, не задавая коэффициент
-- проверка пройдена: 426.5 против 425.2, расхождение 0.3%
+- **`cal_factor` = 425.2 is set by the pharmacy scale** using the 161 g reference
+- **1327 g on the kitchen scale checks the top of the range**, without setting the coefficient
+- check passed: 426.5 against 425.2, discrepancy 0.3%
 
-Честный класс точности с текущими эталонами: **~0.05 г внизу диапазона,
-~0.2 г на 1.3 кг.** Гири класса 0.1% закроют разрыв.
+Honest accuracy class with the current references: **~0.05 g at the bottom of the
+range, ~0.2 g at 1.3 kg.** Weights of class 0.1% will close the gap.
 
-### Точность (пересчитано под 425.2)
+### Accuracy (recalculated for 425.2)
 
-σ сырого отсчёта = **45 отсчётов = 106 мг**, при 11.3 Гц.
+σ of the raw count = **45 counts = 106 mg**, at 11.3 Hz.
 
-| α | Шум после фильтра | Установление | Разрешение |
+| α | Noise after the filter | Settling | Resolution |
 |---|---|---|---|
-| 0.05 | 12.7 мг | 5.3 с | 0.05 г |
-| 0.10 | 21.9 мг | 2.7 с | 0.05 г |
-| 0.15 | 29.0 мг | 1.8 с | 0.1 г |
-| 0.20 | 34.8 мг | 1.3 с | 0.1 г |
-| 0.30 | 44.4 мг | 0.9 с | 0.1 г |
+| 0.05 | 12.7 mg | 5.3 s | 0.05 g |
+| 0.10 | 21.9 mg | 2.7 s | 0.05 g |
+| 0.15 | 29.0 mg | 1.8 s | 0.1 g |
+| 0.20 | 34.8 mg | 1.3 s | 0.1 g |
+| 0.30 | 44.4 mg | 0.9 s | 0.1 g |
 
-**0.01 г при 11.3 Гц недостижим:** нужно N > 448 отсчётов, то есть **40 секунд**
-усреднения. Прежняя оценка «0.01 г достижим» была следствием завышенного
-`cal_factor`. Реально — **0.05 г на покое, 0.1 г в движении.**
+**0.01 g at 11.3 Hz is unreachable:** it needs N > 448 counts, that is **40
+seconds** of averaging. The earlier estimate that "0.01 g is achievable" was a
+consequence of an inflated `cal_factor`. In reality — **0.05 g at rest, 0.1 g in motion.**
 
-**Это меняет ТЗ:** заявленные 0.01 г недостижимы на 11.3 Гц ни фильтром, ни
-усидением железа. Либо целимся в 0.05 г, либо возвращаемся к вопросу про 80 SPS.
+**This changes the specification:** the specified 0.01 g is unreachable at 11.3 Hz
+neither by filtering nor by improving the hardware. Either we target 0.05 g, or we return to the question of 80 SPS.
 
-## Частота задаётся железом, а не кодом
+## The rate is set by the hardware, not by the code
 
-**Регистра конфигурации на этой микросхеме нет.** Даташит Table 1, вывод 15:
+**There is no configuration register on this chip.** Datasheet Table 1, pin 15:
 
 ```
-15  RATE   Digital Input   0: 10 Гц; 1: 80 Гц
+15  RATE   Digital Input   0: 10 Hz; 1: 80 Hz
 ```
 
-Скорость определяется **уровнем на физическом выводе 15**, софтом не меняется.
-Именно поэтому перебор всех 128 байт ничего не дал (максимум 15.6 Гц).
+The rate is determined by the **level on physical pin 15** and cannot be
+changed by software. That is exactly why sweeping all 128 bytes gave nothing (maximum 15.6 Hz).
 
-Канал и усиление тоже не регистровые — задаются **числом импульсов PD_SCK** за
-период (Table 3): 25 → канал A / усиление 128, 26 → B / 32, 27 → A / 64.
-Вне 25–27 — ошибка связи. Драйвер выдаёт ровно 25 и не пишет конфигурацию.
+Channel and gain are not register-based either — they are set by the **number of
+PD_SCK pulses** per period (Table 3): 25 → channel A / gain 128, 26 → B / 32,
+27 → A / 64. Outside 25–27 — communication error. The driver issues exactly 25 and writes no configuration.
 
-## Решено: без пайки, 11.3 Гц постоянно
+## Decided: no soldering, 11.3 Hz permanently
 
-Вывод 15 остаётся зашунтированным на землю. Время устаканивания 0.5 с → ~1 с.
+Pin 15 stays shorted to ground. Settling time 0.5 s → ~1 s.
 
-Отказ от перепайки обоснован **только по времени отклика**: 80 SPS дал бы
-ускорение, но не точность. Реальная точность на 11.3 Гц — **0.05 г на покое**
-(см. таблицу выше), и она не зависит от частоты опроса, а определяется σ и
-длиной окна фильтра.
+The refusal to re-solder is justified **purely by response time**: 80 SPS
+would give speed, but not accuracy. The real accuracy at 11.3 Hz is **0.05 g at
+rest** (see the table above), and it does not depend on the sampling rate but is
+determined by σ and the length of the filter window.
 
-⚠️ Но после исправления `cal_factor` вскрылось: **0.01 г недостижимо ни при какой
-настройке фильтра на 11.3 Гц** — нужно 40 секунд усреднения. Решение по этому
-пункту принято не было, см. «Не выяснено».
+⚠️ But after the `cal_factor` correction it became clear: **0.01 g is unreachable
+with any filter setting at 11.3 Hz** — it needs 40 seconds of averaging. No
+decision has been taken on this point, see "Not established".
 
-## Фильтр проверен офлайн — и вскрыл главное ограничение
+## The filter was verified offline — and exposed the main limitation
 
-`tools/filter_sim.py` — исполняемая спецификация цепочки median(5) → адаптивный
-EMA → AZT → deadband. Прогнана на реальных логах.
+`tools/filter_sim.py` — an executable specification of the chain median(5) →
+adaptive EMA → AZT → deadband. Run on real logs.
 
-| Нагрузка | Показание | Ошибка |
+| Load | Reading | Error |
 |---|---|---|
-| монеты 30.63 г | 30.487 г | −0.143 г |
-| банка 161.41 г | 161.532 г | +0.122 г |
+| coins 30.63 g | 30.487 g | −0.143 g |
+| jar 161.41 g | 161.532 g | +0.122 g |
 
-Шум после фильтра 40–65 мг, но ошибки **±0.12–0.14 г и разного знака**. Ошибка
-коэффициента сдвинула бы оба одинаково. Разные знаки = виновато **плавание нуля**.
+Noise after the filter is 40–65 mg, but the errors are **±0.12–0.14 g and of
+different sign**. A coefficient error would shift both the same way. Different signs mean **zero float** is to blame.
 
-### Плавание нуля измерено (за 35 с)
+### Zero float measured (over 35 s)
 
-| Лог | Отсчёты | Граммы |
+| Log | Counts | Grams |
 |---|---|---|
-| tare1 | −27 | −0.063 г |
-| jar | +19 | +0.045 г |
-| coins | +40 | +0.094 г |
-| 1327 g | −58 | −0.136 г |
-| **tare2** | **+214** | **+0.503 г** |
+| tare1 | −27 | −0.063 g |
+| jar | +19 | +0.045 g |
+| coins | +40 | +0.094 g |
+| 1327 g | −58 | −0.136 g |
+| **tare2** | **+214** | **+0.503 g** |
 
-### AZT работает только внутри окна
+### AZT works only inside the window
 
-| Лог | Результат |
+| Log | Result |
 |---|---|
-| tare2 (монотонный дрейф +6.1 отч/с) | держит **0.000 г**, разброс 26.5 мг, ZERO 98% |
-| tare1 (дрейф −0.78 отч/с) | уходит на −0.245 г, ZERO 3% |
+| tare2 (monotonic drift +6.1 count/s) | holds **0.000 g**, spread 26.5 mg, ZERO 98% |
+| tare1 (drift −0.78 count/s) | drifts to −0.245 g, ZERO 3% |
 
-### Конфликт, который блокирует 0.05 г
+### The conflict that blocks 0.05 g
 
-Окно AZT должно быть **≥0.5 г**, иначе ноль не удержать. Груз 0.05 г = 21 отсчёт,
-**в 10 раз меньше окна**. Любое окно, удерживающее ноль, съест малый груз.
+The AZT window must be **≥0.5 g**, otherwise the zero cannot be held. A 0.05 g
+load is 21 counts, **10 times smaller than the window**. Any window that holds the zero will swallow a small load.
 
-**AZT и разрешение 0.05 г взаимоисключающи на этом железе.** Узкое место не
-фильтр, не `cal_factor` и не частота — это плавание нуля до ±0.5 г, в 10 раз
- больше целевого разрешения.
+**AZT and 0.05 g resolution are mutually exclusive on this hardware.** The
+bottleneck is not the filter, not `cal_factor` and not the rate — it is zero
+float of up to ±0.5 g, 10 times larger than the target resolution.
 
-Честная спецификация сейчас: **~0.15 г на покое, ~0.2 г под нагрузкой.**
+The honest specification right now: **~0.15 g at rest, ~0.2 g under load.**
 
-Чтобы выйти на 0.05 г, снижать надо дрейф, а не улучшать фильтр:
-- чистое питание 3.3 В, дешёвый стабилизатор на модуле подозрителен
-- конденсаторы на питание и опорный вывод модуля
-- дать ячейке выйти на термодное равновесие до тарирования (`tare2` +214 отсчётов
-  похоже на прогрев)
-- механически закрепить платформу, чтобы не ползла
+To get to 0.05 g, the drift has to be reduced, not the filter improved:
+- clean 3.3 V supply, the cheap regulator on the module is suspect
+- capacitors on the supply and the module's reference output
+- let the load cell reach thermal equilibrium before taring (`tare2` +214 counts
+  looks like warm-up)
+- mechanically secure the platform so that it does not creep
 
-## Сеть и веб-интерфейс (2026-10-07)
+## Network and web interface (2026-10-07)
 
-### Архитектура
+### Architecture
 
-| Модуль | Роль |
+| Module | Role |
 |---|---|
-| `main/hx711.{c,h}` | драйвер HX711, 25 тактов, без записи конфигурации |
-| `main/scale_filter.c` | median(5) → адаптивный EMA → AZT → deadband |
-| `main/weight_task.c` | задача измерения на **Core 0**, NVS, снапшот под мьютексом |
-| `main/web_server.c` | WiFi STA + HTTP + страница, работает на Core 1 |
-| `main/scale_app.c` | инициализация и серийная консоль |
+| `main/hx711.{c,h}` | HX711 driver, 25 clocks, no configuration write |
+| `main/scale_filter.c` | median(5) → adaptive EMA → AZT → deadband |
+| `main/weight_task.c` | measurement task on **Core 0**, NVS, snapshot under a mutex |
+| `main/web_server.c` | WiFi STA + HTTP + page, runs on Core 1 |
+| `main/scale_app.c` | initialisation and serial console |
 
-**Правило владения:** `weight_task` — единственный читатель HX711. Все серийные
-команды идут через снапшот, никто не дёргает шину напрямую. Две задачи,
-тактовавшие бы один HX711, перемешали бы импульсные последовательности.
+**Ownership rule:** `weight_task` is the only reader of the HX711. All serial
+commands go through the snapshot, nobody touches the bus directly. Two tasks
+clocking one HX711 would interleave the pulse sequences.
 
-### Пароль WiFi
+### WiFi password
 
-`main/credentials.h` — **в `.gitignore`**. Шаблон `main/credentials.h.example`
-в репозитории. Сейчас: SSID `home4`, пароль лежит только в
-`main/credentials.h` (в `.gitignore`). **Сюда его записывать нельзя** — этот
-файл попадает в репозиторий. Подменить на лету: `k <новый пароль>`.
+`main/credentials.h` is **in `.gitignore`**. The template
+`main/credentials.h.example` is in the repository. Currently: SSID `home4`, the
+password lives only in `main/credentials.h` (in `.gitignore`). **It must not be
+written here** — that file goes into the repository. Substitute it on the fly: `k <new password>`.
 
-### STA к home4 — ПОДКЛЮЧЕНО (2026-10-07)
+### STA to home4 — CONNECTED (2026-10-07)
 
-Причина долгой неудачи была **не в пароле**: WiFi-калибровка в NVS была повреждена,
-`phy_init` логировал `Saving new calibration data due to checksum failure`. Handshake
-не проходил ни с одним вариантом пароля. После `esptool erase_flash` сеть поднялась
-с первой попытки.
+The cause of the long failure was **not the password**: the WiFi calibration in
+NVS was corrupted, `phy_init` logged `Saving new calibration data due to checksum
+failure`. The handshake did not get through with any variant of the password.
+After `esptool erase_flash` the network came up on the first attempt.
 
 ```bash
 python -m esptool --port "$PORT" --baud 460800 erase_flash
 idf.py -p "$PORT" -b 460800 flash
 ```
 
-Успех: `wifi:security: WPA2-PSK-SHA256, rssi: -69, pmf:1`, адрес `192.168.22.123`.
+Success: `wifi:security: WPA2-PSK-SHA256, rssi: -69, pmf:1`, address `192.168.22.123`.
 
-**Если WiFi перестал подключаться после серии прошивок — сначала `erase_flash`,
-а не менять пароль и параметры.**
+**If WiFi stopped connecting after a series of flashes — do `erase_flash`
+first, rather than changing the password and the parameters.**
 
-### Порядок вызовов WiFi — ловушка с молчаливым отказом
+### Order of the WiFi calls — a trap with a silent failure
 
 ```c
 wifi_config_want_connect = false;
-esp_wifi_set_mode(WIFI_MODE_STA);   /* сам запускает подключение! */
+esp_wifi_set_mode(WIFI_MODE_STA);   /* starts the connection by itself! */
 esp_wifi_set_config(WIFI_IF_STA, &wc);
 esp_wifi_start();
 esp_wifi_connect();
 ```
 
-`esp_wifi_set_mode()` **сам инициирует подключение**. Последующий `set_config`
-отвергается с `wifi:sta is connecting, cannot set config` / `ESP_ERR_WIFI_STATE`,
-и **пароль не доходит до чипа** — попытка идёт без аутентификации, что выглядит
-как reason=211 «AP не найден». Подавлять автоподключение нужно флагом, который
-читает обработчик `WIFI_EVENT_STA_START`.
+`esp_wifi_set_mode()` **initiates the connection by itself**. The subsequent
+`set_config` is rejected with `wifi:sta is connecting, cannot set config` /
+`ESP_ERR_WIFI_STATE`, and **the password never reaches the chip** — the attempt
+proceeds without authentication, which looks like reason=211 "AP not found".
+Auto-connection must be suppressed with a flag that the `WIFI_EVENT_STA_START` handler reads.
 
-Тот же порядок обязателен в `wifi_set_auth_mode()`: `stop` → `set_mode` →
-`set_config` → `start`. Без `set_mode` после `stop` получаем `ESP_ERR_WIFI_MODE`.
+The same order is mandatory in `wifi_set_auth_mode()`: `stop` → `set_mode` →
+`set_config` → `start`. Without `set_mode` after `stop` we get `ESP_ERR_WIFI_MODE`.
 
-### Прочие параметры, заданные явно
+### Other parameters set explicitly
 
-- `country = RU, ch 1..13, policy MANUAL` — по умолчанию IDF ставит «01» world-safe
-  с `nchan=11`, а home4 ровно на канале 11, то есть впритык к границе
+- `country = RU, ch 1..13, policy MANUAL` — by default IDF sets the world-safe
+  "01" with `nchan=11`, and home4 is exactly on channel 11, that is right at the edge
 - `scan_method = WIFI_ALL_CHANNEL_SCAN`, `sort_method = WIFI_CONNECT_AP_BY_SIGNAL`,
   `threshold.rssi = -80`
-- PMF configurable at runtime; с ним включённым reason=2, выключенным reason=7.
-  По умолчанию оставляем включённым — сработало
-- Диагностика причин: reason из события отключения, а не внутренние слова
-  `0xb0`/`0x200` из лога状态-машины
+- PMF configurable at runtime; with it enabled reason=2, disabled reason=7.
+  By default we leave it enabled — it worked
+- Diagnostics of causes: the reason from the disconnect event, not the internal
+  words `0xb0`/`0x200` from the state machine log
 
-### Диагностические команды
+### Diagnostic commands
 
-| Команда | Действие |
+| Command | Action |
 |---|---|
-| `s` | скан WiFi: SSID, RSSI, канал, тип шифрования, полоса |
-| `h` | самопроверка HTTP-сервера |
-| `k <пароль>` | подменить пароль без пересборки |
-| `p 0..1` | PMF вкл/выкл с переподключением |
+| `s` | WiFi scan: SSID, RSSI, channel, encryption type, bandwidth |
+| `h` | HTTP server self-test |
+| `k <password>` | substitute the password without rebuilding |
+| `p 0..1` | PMF on/off with reconnection |
 | `a 0..2` | WPA2 / WPA3-SAE / WPA2-WPA3 |
 
-### Ранее (неактуально)
+### Earlier (no longer relevant)
 
-Наблюдавшиеся причины до очистки флеша:
+Causes observed before the flash erase:
 
-| reason | Значение |
+| reason | Meaning |
 |---|---|
-| 2 | AUTH_EXPIRE — AP рвёт станцию в 4-way handshake |
+| 2 | AUTH_EXPIRE — the AP drops the station in the 4-way handshake |
 | 201 | NO_AP_FOUND |
 | 211 | NO_AP_FOUND_IN_AUTHMODE_THRESHOLD |
 
-Проверено и не помогло: PMF capable, WPA2-WPA3 порог, WPA3-SAE.
-**Требуется проверка пароля другим устройством** (телефоном) — ESP32-S3 не
-подключается к WPA2-сети, которая видна в эфире.
+Checked and did not help: PMF capable, the WPA2-WPA3 threshold, WPA3-SAE.
+**The password has to be verified with another device** (a phone) — the ESP32-S3
+does not connect to a WPA2 network that is visible in the air.
 
-### Резервный режим точки доступа
+### Fallback access point mode
 
-Если STA не подключился за 15 с, весы поднимают **открытую** точку доступа
-`ESP32-Scale` и раздают интерфейс на `http://192.168.4.1`. Это позволяет
-проверять UI на стенде независимо от проблемы с home4.
+If the STA has not connected within 15 s, the scale brings up an **open** access
+point `ESP32-Scale` and serves the interface at `http://192.168.4.1`. This makes
+it possible to test the UI on the bench independently of the home4 problem.
 
-### Проверка интерфейса
+### Interface check
 
-Команда `h` делает HTTP-запрос к самому себе и печатает статус и размер:
+The `h` command makes an HTTP request to itself and prints the status and the size:
 
 ```
 #SELFTEST,status=200,declared_bytes=5938
 #SELFTEST,OK page served
 ```
 
-**Обязательно проверять после правок HTML:** потерянная кавычка в строке CSS
-компилируется молча и отдаёт битую страницу. Такое уже случалось.
+**Always check after editing HTML:** a lost quote in a CSS line compiles
+silently and serves a broken page. This has happened before.
 
-### Серийные команды
+### Serial commands
 
-| Команда | Действие |
+| Command | Action |
 |---|---|
-| `c` | текущее показание, σ, состояние |
-| `t` | тара |
-| `d [мин]` | монитор стабильности нуля |
-| `m [г]` | спаренная калибровка с автодетектом груза |
-| `w` | константы фильтра и состояние |
-| `R` | выгрузка сырых отсчётов, записанных самой задачей измерения |
-| `x 0\|1` | выключить/включить радио WiFi (для замера шума) |
-| `s` | сканирование WiFi с типом шифрования и полосой |
-| `h` | самопроверка HTTP-сервера |
-| `a 0..2` | режим авторизации: WPA2 / WPA3-SAE / WPA2-WPA3 |
-| `p 0\|1` | PMF вкл/выкл |
-| `k <пароль>` | подменить пароль без пересборки |
-| `b <MAC>` | привязаться к конкретной точке доступа, `b off` — снять |
-| `L 0|1` | отладочный лог драйвера WiFi |
-| `G 0|1` | маска прерываний вокруг чтения HX711 (для A/B) |
-| `M <MAC>` | подменить MAC станции |
+| `c` | current reading, σ, state |
+| `t` | tare |
+| `d [min]` | zero stability monitor |
+| `m [g]` | paired calibration with auto-detect of the load |
+| `w` | filter constants and state |
+| `R` | dump of the raw counts recorded by the measurement task itself |
+| `x 0\|1` | switch the WiFi radio off/on (for measuring noise) |
+| `s` | WiFi scan with encryption type and bandwidth |
+| `h` | HTTP server self-test |
+| `a 0..2` | authorisation mode: WPA2 / WPA3-SAE / WPA2-WPA3 |
+| `p 0\|1` | PMF on/off |
+| `k <password>` | substitute the password without rebuilding |
+| `b <MAC>` | bind to a specific access point, `b off` — clear it |
+| `L 0\|1` | debug log of the WiFi driver |
+| `G 0\|1` | interrupt mask around the HX711 read (for A/B) |
+| `M <MAC>` | substitute the station MAC |
 
 
-## Помеха от WiFi портила все измерения (решено 2026-10-08)
+## WiFi interference spoiled all measurements (solved 2026-10-08)
 
-### Что наблюдалось
+### What was observed
 
-Показания на пустой платформе гуляли на ±0.6 г, а иногда в отсчётах появлялись
-`-1` и `0x3FFFFF`. Я сначала решил, что виноват деадбенд 40 отсчётов, и предложил
-расширить его до 200. **Это было бы ошибкой:** я считал шум по заражённым данным.
+Readings on an empty platform wandered by ±0.6 g, and sometimes `-1` and
+`0x3FFFFF` appeared among the counts. I first decided the 40-count deadband was
+to blame and proposed widening it to 200. **That would have been a mistake:** I was measuring noise from contaminated data.
 
-### Настоящая причина
+### The real cause
 
-`esp_rom_delay_us()` — это **откалиброванный цикл на CPU, а не аппаратный
-таймер**. Любое прерывание, попавшее внутрь, просто растягивает задержку. Значит
-период SCK становился неопределённым, чип терял счёт своих тактов, и чтение
-возвращало `-1` или `0x3FFFFF` — ровно тот симптом, который в грабле №1
-приписан забытому 25-му импульсу. Драйвер был написан верно.
+`esp_rom_delay_us()` is a **calibrated cycle on the CPU, not a hardware timer**.
+Any interrupt that lands inside simply stretches the delay. That means the SCK
+period became indeterminate, the chip lost count of its own clocks, and the read
+returned `-1` or `0x3FFFFF` — exactly the symptom that gotcha №1 blames on a
+forgotten 25th pulse. The driver was written correctly.
 
-WiFi крутится на том же Core 0, что и задача измерения, поэтому каждая пачка
-передачи ложилась прямо в окно чтения.
+WiFi runs on the same Core 0 as the measurement task, so every burst of
+transmission landed right inside the read window.
 
-### Замер, который это доказал
+### The measurement that proved it
 
-Пустая платформа, доля испорченных выборок (порог 5σ):
+Empty platform, fraction of corrupted samples (5σ threshold):
 
-| Условие | До правки | После правки |
+| Condition | Before the fix | After the fix |
 |---|---|---|
-| Радио выключено | 0 из 507 | — |
-| Радио, HTTP нет | 3 из 463 (0.65 %) | — |
-| Радио, HTTP каждые 100 мс | **19 из 185 (10.3 %)** | **4 из 438 (0.9 %)** |
+| Radio off | 0 of 507 | — |
+| Radio, no HTTP | 3 of 463 (0.65 %) | — |
+| Radio, HTTP every 100 ms | **19 of 185 (10.3 %)** | **4 of 438 (0.9 %)** |
 
-Сырой размах на пустой платформе: **3 775 516 отсчётов → 582 отсчёта.**
+Raw spread on an empty platform: **3 775 516 counts → 582 counts.**
 
-### Правка
+### The fix
 
-1. Всё чтение 24 бит и 25-й импульс обёрнуты в `portENTER_CRITICAL`.
-2. `HX711_SETTLE_US` уменьшен 20 → 5 мкс. Даташит допускает период SCK до 1 МГц
-   (1 мкс), так что 5 мкс — пятикратный запас. Окно с выключенными прерываниями
-   стало ~250 мкс вместо ~1 мс; маска держится только на время чтения, ожидание
-   DOUT осталось блокирующим.
-3. Опрос веб-страницы 400 мс → 1500 мс.
-4. Провалы чтения при DOUT выше уровня дольше 250 мс получили откат 50 мс. Без
-   этого `continue` без задержки превращал залипший DOUT в 100% загрузку Core 0.
+1. The whole 24-bit read and the 25th pulse are wrapped in `portENTER_CRITICAL`.
+2. `HX711_SETTLE_US` reduced 20 → 5 µs. The datasheet allows an SCK period down
+   to 1 MHz (1 µs), so 5 µs is a fivefold margin. The window with interrupts
+   disabled became ~250 µs instead of ~1 ms; the mask is held only for the time
+   of the read, the wait for DOUT remained blocking.
+3. Web page polling 400 ms → 1500 ms.
+4. Read failures with DOUT high for more than 250 ms got a 50 ms backoff. Without
+   it a `continue` with no delay turned a stuck DOUT into 100% load on Core 0.
 
-### Перенос WiFi на Core 1 — история решения
+### Moving WiFi to Core 1 — the story of the decision
 
-Сначала я закрепил задачу WiFi за Core 1, решив, что раз помеха доказанно есть,
-не надо пускать прерывания WiFi в то же ядро, где идёт чтение. Тогда это не
-помогло, и я откатил на Core 0, решив, что перенос вредит скорости подключения.
-Позже выяснилось, что откат был поспешным: причина отказа лежала не в ядрах, а в
-неработающем ограничении мощности передачи.
+First I pinned the WiFi task to Core 1, reasoning that since the interference was
+proven, WiFi interrupts should not be let into the same core where the read runs.
+That did not help at the time, and I rolled it back to Core 0, deciding the move
+hurt connection speed. Later it turned out that the rollback was premature: the
+cause lay not in the cores but in a non-working transmit power limit.
 
-Позже перенос всё же вернулся и остался. Аргумент теперь не «убрать помеху», а
-другой, и он проверяем: `portENTER_CRITICAL` на двухъядерном Xtensa маскирует
-прерывания **только на том ядре, где выполняется**. Задача измерения живёт на
-Core 0, значит при WiFi на Core 1 его прерывания маской не задеваются, и защита
-чтения сохраняется в полном объёме.
+Later the move did come back and stayed. The argument now is not "remove the
+interference" but a different one, and it is testable: `portENTER_CRITICAL` on a
+dual-core Xtensa masks interrupts **only on the core where it runs**. The
+measurement task lives on Core 0, so with WiFi on Core 1 its interrupts are not
+touched by the mask, and the read protection is preserved in full.
 
-Обе настройки (Core 1 и 8 dBm) проверены совместно: 200 секунд без единого разрыва.
-Изолированного A/B только по ядру не делал, поэтому вклад каждого фактора по
-отдельности не измерен — измерена только связка целиком.
+Both settings (Core 1 and 8 dBm) were verified together: 200 seconds without a
+single drop. I did not run an isolated A/B on the core alone, so the contribution
+of each factor separately has not been measured — only the whole combination.
 
-### Про WDT-панику — она была артефактом измерения
+### About the WDT panic — it was an artefact of the measurement
 
-Пока шёл опрос показаний с частотой 5 мс, `task_wdt` паниковал каждые 5 с:
-`CPU 0: main`, `IDLE0` не сбросил сторож. За 75 с обычной работы — **ноль
-срабатываний**. Причина: `taskYIELD()` не передаёт ход idle-задачам, потому что у
-них приоритет 0, а yield переключает только на равный или высший. Ожидание DOUT
-переведено на `vTaskDelay(1)` после короткого спина.
+While readings were being polled at a 5 ms rate, `task_wdt` panicked every 5 s:
+`CPU 0: main`, `IDLE0` did not reset the watchdog. Over 75 s of normal operation —
+**zero trips**. Reason: `taskYIELD()` does not hand over to the idle tasks,
+because their priority is 0, and yield only switches to an equal or higher
+priority. The wait for DOUT was moved to `vTaskDelay(1)` after a short spin.
 
-**Вывод, который стоит запомнить: инструмент измерения менял то, что измерял.**
-Опрос снапшота с приоритетом 6 держал обе очереди ядра непустыми. Поэтому сырые
-отсчёты теперь пишет сама задача измерения в кольцевой буфер, а консоль только
-выгружает его командой `R` — опроса в рантайме нет вовсе.
+**A conclusion worth remembering: the measuring instrument was changing what it
+measured.** Polling the snapshot with priority 6 kept both of the core's queues
+non-empty. So now the raw counts are written by the measurement task itself into
+a ring buffer, and the console only dumps them with `R` — no polling at all.
 
 
-## Дрейфа нет — прежняя запись была неверной (исправлено 2026-10-09)
+## There is no drift — the earlier entry was wrong (corrected 2026-10-09)
 
-### Что было записано
+### What had been written
 
-Ранее здесь стояло: «ноль гуляет на ±0.4 г в установившемся режиме и на ±1.8 г
-в первые 30 секунд после касания», и на этом строился вывод, что дрейф —
-главный ограничитель точности.
+Previously this said: "the zero wanders by ±0.4 g in steady state and by ±1.8 g
+in the first 30 seconds after a touch", and on that basis the conclusion was
+built that drift is the main limiter of accuracy.
 
-**Это было неверно.** Цифры брались из замеров, сделанных в неподходящих
-условиях, и я принял за дрейф три разные вещи.
+**That was wrong.** The figures came from measurements made in unsuitable
+conditions, and I took three different things for drift.
 
-### Что показал нормальный замер
+### What a normal measurement showed
 
-Десять минут, свежая тара, платформа не тронута, опрос через HTTP раз в 3 с:
+Ten minutes, fresh tare, platform untouched, polling over HTTP every 3 s:
 
 | | |
 |---|---|
-| медиана | 419 013 |
-| σ | 43.9 отсчёта = 103 мг |
-| размах | 258 отсчётов = 0.6 г |
-| медиана по четвертям | 419 000 → 419 039 → 419 016 → 418 994 |
-| уход начала к концу | **−3 отсчёта** |
-| тренд | **+3 мг/мин** |
+| median | 419 013 |
+| σ | 43.9 counts = 103 mg |
+| spread | 258 counts = 0.6 g |
+| median by quarters | 419 000 → 419 039 → 419 016 → 418 994 |
+| walk-off from start to end | **−3 counts** |
+| trend | **+3 mg/min** |
 
-Нулевой тренд и постоянная медиана. **Точка покоя стабильна в пределах
-±0.11 г за десять минут.** Ни прогрева, ни ползучести нет.
+Zero trend and a constant median. **The resting point is stable within ±0.11 g
+over ten minutes.** Neither warm-up nor creep.
 
-### Откуда взялись «±0.4 г»
+### Where the "±0.4 g" came from
 
-1. **Блуждание, а не дрейф.** σ блуждания 103 мг, а размах 258 отсчётов — это
-   хвост случайного шагания, а не систематическое смещение. Шум коррелирован по
-   времени, и я принял его за медленный уход.
-2. **Касания платформы.** В одном из замеров был выброс +3 300 отсчётов = +7.8 г
-   на пустой платформе. Это физическое событие, и оно целиком попало в «дрейф».
-3. **Тару, взятую во время осадки.** Тара на 25-й секунде после загрузки дала
-   418 943, ручная следом — 419 654, платформа осела на 418 900. Тару сняли на
-   1.8 г выше покоя. Это не дрейф, а неверная методика.
+1. **Wander, not drift.** The wander σ is 103 mg, and the spread of 258 counts
+   is the tail of random stepping, not a systematic offset. The noise is correlated
+   in time, and I took it for a slow walk-off.
+2. **Touches to the platform.** In one of the measurements there was an outlier of
+   +3 300 counts = +7.8 g on an empty platform. It went into the "drift" in full.
+3. **A tare taken during settling.** The tare on the 25th second after boot gave
+   418 943, a manual one right after — 419 654, the platform settled to 418 900.
+   The tare was taken 1.8 g above rest. That is not drift, it is bad methodology.
 
-Проверено отдельно, что WiFi дрейфа не создаёт: 4 минуты с включённым радио —
-размах 159 отсчётов, с выключенным — 125.
+Separately verified that WiFi creates no drift: 4 minutes with the radio on —
+spread of 159 counts, with it off — 125.
 
-### Почему всё выглядело как поломка
+### Why it all looked like a breakdown
 
-Показание на пустой платформе **залипало на −0.10 г** и не показывало ноль.
-Причина была не в железе и не в шуме:
+The reading on an empty platform **stuck at −0.10 g** and would not show zero.
+The cause was neither in the hardware nor in the noise:
 
 ```c
 #define AZT_WINDOW 40.0
-#define DEADBAND   AZT_WINDOW      /* одна и та же константа */
+#define DEADBAND   AZT_WINDOW      /* the same constant */
 ...
 if (fabs(ema - anchor) > AZT_WINDOW) {
     anchor = ema - (ema > anchor ? AZT_WINDOW : -AZT_WINDOW);
 }
 ```
 
-Авто-ноль прижимал якорь ровно к `AZT_WINDOW`, а это та же величина, что и
-деадбенд. Показание оказывалось ровно там, где принимается решение «ноль это
-или нет»: 40.000000 отсчётов читается как ноль, 40.000001 — как 0.09 г.
+The auto-zero pinned the anchor exactly to `AZT_WINDOW`, which is the same
+magnitude as the deadband. The reading ended up exactly where the decision "is
+this zero or not" is made: 40.000000 counts reads as zero, 40.000001 — as 0.09 g.
 
-### Правка
+### The fix
 
-Внутри деадбенда якорь приравнивается к показанию, а не подтягивается к нему
-со скоростью 6 отсч/с:
+Inside the deadband the anchor is set equal to the reading, instead of being
+pulled towards it at a rate of 6 counts/s:
 
 ```c
 if (fabs(ema - anchor) <= DEADBAND) {
-    anchor = ema;          /* ровно ноль */
+    anchor = ema;          /* exactly zero */
 }
 ```
 
-Залипание исчезает полностью: ноль получается точным, а настоящий груз выводит
-показание далеко за деадбенд, и слежение возобновляется как прежде.
+The sticking disappears completely: the zero comes out exact, and a real load
+drives the reading well beyond the deadband, and tracking resumes as before.
 
-В веб-интерфейсе фиксация показания уступает нулю: если прибор сообщает
-`zero`, замороженная цифра сбрасывается, иначе экран продолжал бы показывать
-значение, в которое прибор уже не верит.
+In the web interface the freeze of the reading yields to zero: if the device
+reports `zero`, the frozen digit is reset, otherwise the screen would keep showing
+a value the device no longer believes.
 
-### Результат
+### Result
 
-- Пустая платформа, 35 замеров за 200 секунд: **35 из 35 ровно 0.000 г**.
-- Гиря 73.04 г: масса 73.106 г, ошибка **+0.066 г (+0.09 %)**.
+- Empty platform, 35 measurements over 200 seconds: **35 out of 35 exactly 0.000 g**.
+- Weight 73.04 g: mass 73.106 g, error **+0.066 g (+0.09 %)**.
 
-### Что осталось настоящим ограничителем
+### What remained the real limiter
 
-Не дрейф, а **шум σ = 103 мг**. Он и определяет, что прибор не может показывать
-0.01 г: при таком σ допуск ±5 мг потребовал бы усреднения 40 секунд.
-Дальше работать надо с шумом и с касаниями платформы, а не с дрейфом,
-которого нет.
+Not drift, but **noise σ = 103 mg**. It is what determines that the device cannot
+show 0.01 g: with such a σ a tolerance of ±5 mg would require 40 seconds of
+averaging. Further work has to be on the noise and on touches to the platform,
+not on the drift, which does not exist.
 
 
-## WiFi: «auth expired» из-за неработающего ограничения мощности (решено 2026-10-08)
+## WiFi: "auth expired" caused by a non-working power limit (solved 2026-10-08)
 
-### Симптом
+### Symptom
 
-Станция видела `home4` (18 сетей в эфире, `home4` на −69…−74 dBm, WPA2-PSK, канал 11),
-пароль был верен — телефон подключался. Но каждая попытта авторизации обрывалась
-ровно через **1010 мс**, код `reason=2` = `WIFI_REASON_AUTH_EXPIRE`. За 5 минут —
-более 40 попыток, ни одного `up:`.
+The station saw `home4` (18 networks in the air, `home4` at −69…−74 dBm, WPA2-PSK,
+channel 11), the password was correct — a phone connected. But every authentication
+attempt broke off exactly after **1010 ms**, code `reason=2` =
+`WIFI_REASON_AUTH_EXPIRE`. In 5 minutes — over 40 attempts, not one `up:`.
 
-Что было проверено и исключено, чтобы не гадать заново:
+What was checked and ruled out, so as not to guess all over again:
 
-- пароль (телефон подключается с тем же паролем);
-- блокировка MAC в роутере (не блокирует);
-- PMF: `p 0` ничего не меняет;
-- привязка к BSSID: и к сильной точке `cc:d8:43:85:c6:02`, и к слабой;
-- `erase_flash`: временно помог, потом всё вернулось;
-- маска прерываний в HX711 (`G 0`) и перенос WiFi на Core 1 — не причина.
+- password (the phone connects with the same password);
+- MAC blocking in the router (it does not block);
+- PMF: `p 0` changes nothing;
+- binding to BSSID: both to the strong AP `cc:d8:43:85:c6:02` and to the weak one;
+- `erase_flash`: helped temporarily, then everything came back;
+- the interrupt mask in the HX711 (`G 0`) and moving WiFi to Core 1 — not the cause.
 
-### Причина
+### Cause
 
-`wifi_country_t.max_tx_power = 8.5` **не действовал**. Проверено чтением обратно:
+`wifi_country_t.max_tx_power = 8.5` **had no effect**. Verified by reading it back:
 
 ```
-W (2572) web: TX power set 8.0 dBm -> ESP_OK, reads back 8 dBm      ← после правки
+W (2572) web: TX power set 8.0 dBm -> ESP_OK, reads back 8 dBm      <-- after the fix
 ```
 
-до правки геттер отдавал **80** — величину, физически невозможную для передатчика,
-то есть ограничения не было вовсе, и радио работало на полной мощности.
+before the fix the getter returned **80** — a value physically impossible for a
+transmitter, i.e. there was no limit at all, and the radio ran at full power.
 
-Это ровно тот случай, что описан в сообществе ESP32: перевозбуждённый передатчик
-заставляет точку доступа рвать станцию прямо на этапе аутентификации
-(`auth expired` / `association expired`). Подтвердили девять человек в треде
-home-assistant; там же описана вторая причина — ослабленный антенный разъём.
+This is exactly the case described in the ESP32 community: an overdriven
+transmitter makes the access point drop the station right at the authentication
+stage (`auth expired` / `association expired`). Nine people confirmed it in the
+home-assistant thread; a second cause is there too — a loosened antenna connector.
 
-### Правка
+### The fix
 
-Ограничение мощности выставляется явно **после** `esp_wifi_start()` и сразу
-проверяется чтением:
+The power limit is set explicitly **after** `esp_wifi_start()` and is immediately
+verified by reading it back:
 
 ```c
 esp_err_t perr = esp_wifi_set_max_tx_power(8);
@@ -515,480 +515,480 @@ if (gerr != ESP_OK || tx_dbm != 8) {
 }
 ```
 
-Особенность API: сеттер принимает dBm, геттер в этой версии тоже отдаёт dBm
-(просили 8 — вернулось 8). Проверять надо обязательно: значение из
-`wifi_country_t` молча не применялось.
+An API peculiarity: the setter takes dBm, and in this version the getter also
+returns dBm (asked for 8 — got 8). It must be checked: the value from
+`wifi_country_t` was silently not applied.
 
-### Результат
+### Result
 
-| | До | После |
+| | Before | After |
 |---|---|---|
-| Подключение | не подключается, >40 попыток | `rssi: -70…-72`, `up:` |
-| Разрывы за 200 с | 10 за первые 75 с | **0** |
-| Уход в точку доступа | постоянно | **0** |
+| Connection | does not connect, >40 attempts | `rssi: -70…-72`, `up:` |
+| Drops over 200 s | 10 in the first 75 s | **0** |
+| Fallback to access point | constantly | **0** |
 
-### Побочно исправлено: частота CPU
+### Also fixed as a side effect: CPU frequency
 
-`CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ` был **160** при максимуме S3 в 240. Для WiFi это
-недопустимо. Поднято до 240 и закреплено в `sdkconfig.defaults` с комментарием.
+`CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ` was **160** while the S3 maximum is 240, which
+is unacceptable for WiFi. Raised to 240 and pinned in `sdkconfig.defaults` with a comment.
 
-### Побочно исправлено: цикл перезапуска драйвера
+### Also fixed as a side effect: the driver restart cycle
 
-Раньше задача каждые 30 секунд делала `esp_wifi_stop()` → `esp_wifi_start()`, чтобы
-вернуться из точки доступа в станцию. При отказе роутера это десятки полных
-перезапусков PHY в час, и наблюдалось, что после них радио глухнет (`ap_num=0`).
-Теперь: задача работает раз в 5 минут и только когда устройство действительно
-осталось в режиме точки доступа; если станция уже подключалась, точка доступа
-больше не поднимается никогда; откат переподключения увеличен с 8 до 20 секунд,
-чтобы не долбить роутер.
+Previously the task every 30 seconds did `esp_wifi_stop()` → `esp_wifi_start()`
+in order to get back from access point mode to station. If the router refuses,
+that is dozens of full PHY restarts per hour, and it was observed that after them
+the radio goes deaf (`ap_num=0`). Now: the task runs once every 5 minutes and only
+when the device really did stay in access point mode; if the station has already
+connected, the access point is never brought up again; the reconnection backoff
+is increased from 8 to 20 seconds, so as not to hammer the router.
 
 
-## Веб-интерфейс не открывался: lwIP был голоден (решено 2026-10-09)
+## The web interface would not open: lwIP was starving (solved 2026-10-09)
 
-### Симптом
+### Symptom
 
-`/api/weight` отвечал за **0.046 с** (185 байт), а `/` не открывался вовсе.
-Проверено и исключено, чтобы не искать заново:
+`/api/weight` responded in **0.046 s** (185 bytes), while `/` would not open at
+all. Checked and ruled out, so as not to search all over again:
 
-- страница отдаётся, но тело приходит пустым; `ERR_ADDRESS_UNREACHABLE` в браузере;
-- кэш браузера — добавлены `Cache-Control: no-store, no-cache, must-revalidate`,
-  `Pragma: no-cache`, `Expires: 0`, и заголовки подтвердились в ответе;
-- генератор страницы — `add_custom_command` вместо `execute_process`, теперь
-  инкрементальная сборка тоже перегенерирует страницу;
-- свободная куча: **8.5 МБ**, ограничение памяти исключено;
-- маска прерываний HX711: **измерено 267 мкс** (максимум 402) — как и задумано;
-- мощность передачи 8 / 13 / 17 / 19 дБм — никакой разницы;
-- обрывов связи не было ни разу за время диагностики.
+- the page is served, but the body arrives empty; `ERR_ADDRESS_UNREACHABLE` in the browser;
+- browser cache — added `Cache-Control: no-store, no-cache, must-revalidate`,
+  `Pragma: no-cache`, `Expires: 0`, and the headers were confirmed in the response;
+- page generator — `add_custom_command` instead of `execute_process`, now an
+  incremental build regenerates the page too;
+- free heap: **8.5 MB**, a memory limit is ruled out;
+- HX711 interrupt mask: **measured 267 µs** (maximum 402) — as intended;
+- transmit power 8 / 13 / 17 / 19 dBm — no difference whatsoever;
+- not a single connection drop during the whole diagnosis.
 
-### Наблюдение, которое всё решило
+### The observation that settled everything
 
-Замер сырым сокетом, без `curl`:
+Measurement with a raw socket, without `curl`:
 
 ```
-всего получено: 1525 байт
-порции (сек, байт): [(0.02, 85), (0.02, 1440)]
+total received: 1525 bytes
+chunks (seconds, bytes): [(0.02, 85), (0.02, 1440)]
 ```
 
-85 байт — это заголовки ответа. 1440 — ровно `CONFIG_LWIP_TCP_MSS`.
-**Дальше — тишина.** Один сегмент и стоп: отправлено столько, сколько влезло
-в буфер отправки, и буфер ни разу не опустел.
+85 bytes is the response headers. 1440 is exactly `CONFIG_LWIP_TCP_MSS`. **After
+that — silence.** One segment and a stop: as much as fit into the send buffer was
+sent, and the buffer never emptied once.
 
-Непустой буфер при живом соединении означает одно: **подтверждения от приёмника
-не обрабатываются**. То есть сетевой стек голодает.
+A non-empty buffer on a live connection means exactly one thing: **the
+acknowledgements from the receiver are not being processed**. The network stack is starving.
 
-### Причина
+### Cause
 
-`CONFIG_LWIP_TCPIP_TASK_AFFINITY` был `NO_AFFINITY`, и lwIP-поток попадал на
-Core 0 — туда же, где живёт задача измерения HX711, которая просыпается
-непрерывно (ожидание DOUT опрашивает линию). Приоритет lwIP ниже приоритета
-измерения, поэтому подтверждения не обрабатывались, окно не двигалось, отдача
-обрывалась на 8192–10240 байтах с `ESP_ERR_HTTPD_RESP_SEND`.
+`CONFIG_LWIP_TCPIP_TASK_AFFINITY` was `NO_AFFINITY`, and the lwIP thread landed
+on Core 0 — the same core where the HX711 measurement task lives, which wakes up
+continuously (the DOUT wait polls the line). The lwIP priority is below the
+measurement priority, so acknowledgements were not processed, the window did not
+move, and transmission broke off at 8192–10240 bytes with `ESP_ERR_HTTPD_RESP_SEND`.
 
-Мелкие ответы проходили по той же причине: они помещались в буфер целиком и не
-требовали обработки подтверждений вообще.
+Small responses passed for the same reason: they fit into the buffer entirely and
+required no acknowledgement processing at all.
 
-### Правки
+### The fixes
 
-1. `CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU1=y` — сетевой стек на Core 1 вместе с
-   WiFi, задача измерения на Core 0. У каждого ядра один хозяин.
-2. `CONFIG_FREERTOS_HZ` 100 → **1000**: при тике 10 мс у lwIP слишком грубая
-   точность таймеров повторной передачи и отложенных подтверждений.
-3. `CONFIG_LWIP_TCP_SND_BUF_DEFAULT` и `TCP_WND_DEFAULT` 5760 → **17440**:
-   в полёте мало байт для длинной передачи.
-4. Страница сжимается при встраивании: 18 544 → **12 830 байт**.
-5. Заголовки запрета кэширования — см. выше.
-6. Отказ от кодировки чанков: `curl` писал
-   `Leftovers after chunking: 1351 bytes` и выбрасывал тело целиком. С отправкой
-   одного тела с `Content-Length` обе стороны не могут разойтись.
+1. `CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU1=y` — the network stack on Core 1
+   together with WiFi, the measurement task on Core 0. Each core has one owner.
+2. `CONFIG_FREERTOS_HZ` 100 → **1000**: with a 10 ms tick lwIP has too coarse a
+   resolution for the retransmission and delayed-acknowledgement timers.
+3. `CONFIG_LWIP_TCP_SND_BUF_DEFAULT` and `TCP_WND_DEFAULT` 5760 → **17440**:
+   too few bytes in flight for a long transfer.
+4. The page is compressed on embedding: 18 544 → **12 830 bytes**.
+5. Cache-disabling headers — see above.
+6. Dropping chunked encoding: `curl` printed
+   `Leftovers after chunking: 1351 bytes` and discarded the body entirely. By
+   sending a single body with `Content-Length` the two sides cannot disagree.
 
-### Результат
+### Result
 
-| | До | После |
+| | Before | After |
 |---|---|---|
-| `/` | 0 байт, таймаут | **12 830 байт за 0.96–3.75 с** |
-| `/api/weight` | 0.046 с | 0.046 с |
-| Точка остановки | 8192 байт (один MSS) | не прерывается |
+| `/` | 0 bytes, timeout | **12 830 bytes in 0.96–3.75 s** |
+| `/api/weight` | 0.046 s | 0.046 s |
+| Stop point | 8192 bytes (one MSS) | not interrupted |
 
-### Общий урок
+### The general lesson
 
-Симптом выглядел как «не работает WiFi» и «плохая разметка». На деле это была
-настройка приоритетов между ядром. Диагностика шла от симптома к причине
-неверно: я несколько раз проверял то, что точно работает — пароль, мощность,
-кеш, память. Помог только замер «сколько байт пришло за раз», который показал
-ровно `CONFIG_LWIP_TCP_MSS`.
+The symptom looked like "WiFi does not work" and "bad markup". In reality it was
+a priority arrangement between the cores. The diagnosis went from symptom to cause
+incorrectly: several times I checked things that definitely work — the password,
+the power, the cache, the memory. Only the measurement of "how many bytes arrived
+per round" helped, which showed exactly `CONFIG_LWIP_TCP_MSS`.
 
 
-## Точность измерена парным методом (2026-10-10, повторно)
+## Accuracy measured by the paired method (2026-10-10, repeated)
 
-Методика: пустая платформа снята отдельной точкой, эталон кладётся отдельно,
-считается дельта отсчётов, а не показание прибора.
+Method: the empty platform is taken as a separate point, the reference is placed
+separately, and the delta of counts is computed, not the instrument's reading.
 
-**Две независимые пары:**
+**Two independent pairs:**
 
-| Пара | Пустая платформа | Эталон 73.03 г | Дельта | Ошибка |
+| Pair | Empty platform | Reference 73.03 g | Delta | Error |
 |---|---|---|---|---|
-| 5 минут | 419 425 | 450 569 | 31 144 | **+0.147 г** |
-| Чередование | 419 342 | 450 482 | 31 140 | **+0.138 г** |
+| 5 minutes | 419 425 | 450 569 | 31 144 | **+0.147 g** |
+| Alternating | 419 342 | 450 482 | 31 140 | **+0.138 g** |
 
-**Расхождение между парами — 9 мг.** Ошибка воспроизводится.
+**The discrepancy between the pairs is 9 mg.** The error is reproducible.
 
 | | |
 |---|---|
-| Итог | **+0.14 г (+0.20 %)** |
-| sigma прибора | 15-18 мг |
-| Уход оседки | +0.013 г за 5 минут |
-| Возмущённых замеров | 0 из 99 |
+| Result | **+0.14 g (+0.20 %)** |
+| device sigma | 15-18 mg |
+| settling walk-off | +0.013 g over 5 minutes |
+| disturbed measurements | 0 of 99 |
 
-### Исправление прежней записи
+### Correction of the earlier entry
 
-Раньше здесь стояло, что «два замера разошлись на 0.24 г, разброс больше
-ошибки». **Это было неверно.** Один из тех двух замеров был испорчен: эталон
-положили прямо во время захвата, и в хвост записи попал груз, который я не
-отфильтровал. Второй, чистый замер дал +0.147 г, а чередующийся — +0.138 г.
+Previously this said that "two measurements differed by 0.24 g, the spread is
+larger than the error". **That was wrong.** One of those two measurements was
+spoiled: the reference was placed right in the middle of the capture, and a load I
+did not filter landed in the tail. The clean one gave +0.147 g, alternating +0.138 g.
 
-⚠️ **Приём, который это породил.** Я отбрасывал выбросы порогом
-`max(5*sigma, 0.15 г)`, который выкинул 48 замеров из 78 — то есть почти всё,
-и объявил оставшееся «точным». Фильтровать надо по признаку, который прибор
-отдаёт сам: при норме `avg_sigma_mg` = 15-18, при возмущении = 140 и выше.
+⚠️ **The technique that produced this.** I was discarding outliers with the
+threshold `max(5*sigma, 0.15 g)`, which threw away 48 measurements out of 78 —
+that is, almost everything, and declared the remainder "accurate". Filtering has
+to use the sign the device itself reports: normal `avg_sigma_mg` = 15-18, disturbed = 140 and above.
 
-### Что остаётся ограничителем
+### What remains the limiter
 
-Не прибор: его собственная погрешность 15 мг.
+Not the device: its own uncertainty of 15 mg.
 
-**Пустая точка гуляет между сессиями на 195 мг** (419 425 против 419 342).
-Именно она даёт неопределённость итоговой цифры, а не шум и не оседка.
+**The empty point wanders between sessions by 195 mg** (419 425 against 419 342).
+That, not the noise and not the settling, gives the final figure its uncertainty.
 
 
-## Окно усреднения выбрано по измеренному колену (2026-10-09)
+## The averaging window was chosen from the measured knee (2026-10-09)
 
-Запрос был «расширь окно на минимально возможную величину». Сначала измерено,
-что окно вообще покупает — иначе это очередная правка константы вслепую.
+The request was "widen the window by the smallest possible amount". First it was
+measured what the window actually buys — otherwise this is another blind constant edit.
 
-Чистый захват 507 отсчётов, пустая платформа, σ одного отсчёта 110 мг:
+Clean capture of 507 counts, empty platform, σ of a single count 110 mg:
 
-| Окно | σ среднего | Цена |
+| Window | σ of the mean | Price |
 |---|---|---|
-| 4.4 с | 30 мг | |
-| 8.9 с | 23 мг | было здесь |
-| **17.8 с** | **15 мг** | **ждать вдвое дольше — выбрано** |
-| 26.6 с | 10.5 мг | ждать втрое дольше |
+| 4.4 s | 30 mg | |
+| 8.9 s | 23 mg | it was here |
+| **17.8 s** | **15 mg** | **wait twice as long — chosen** |
+| 26.6 s | 10.5 mg | wait three times as long |
 
-Измеренное значение в **2–3 раза хуже** предсказания `1/√N` для белого шума.
-Значит шум коррелирован по времени, и усреднением далеко не уйти. Колено на
-18 с: переход 9 → 18 с отдаёт 35 % ошибки за удвоение ожидания, дальше каждое
-следующее удвоение отдаёт меньше половины.
+The measured value is **2–3 times worse** than the `1/√N` prediction for white
+noise. That means the noise is correlated in time, and averaging will not get you
+far. The knee is at 18 s: going from 9 → 18 s gives back 35 % error for double the
+waiting; beyond that each further doubling gives back less than half.
 
-### Фиксацию пришлось перенастроить под новое окно
+### The freeze had to be retuned for the new window
 
-Шаг среднего по окну сопоставим с допуском, поэтому рост окна ломает фиксацию:
-счётчик тишины постоянно сбрасывается и цифра не встаёт.
+The step of the mean across the window is comparable to the tolerance, so growing
+the window breaks the freeze: the quiet counter resets and the digit never settles.
 
-| | было | стало |
+| | was | became |
 |---|---|---|
-| `AVG_N` | 6 (9 с) | **12 (18 с)** |
+| `AVG_N` | 6 (9 s) | **12 (18 s)** |
 | `LOCK_HOLD` | 4 | **3** |
-| `LOCK_TOL` | 0.02 г | **0.03 г** |
+| `LOCK_TOL` | 0.02 g | **0.03 g** |
 
-### Проверка на реальном шуме
+### Check on real noise
 
-Захват повторён до 6.7 мин, груз 73.03 г, модель прибора фильтрует на
-11.3 Гц при опросе веба раз в 1.5 с:
+The capture was repeated up to 6.7 min, load 73.03 g, the device model filters at
+11.3 Hz with web polling every 1.5 s:
 
-| | фиксация | σ окна | различных значений на экране |
+| | freeze | window σ | distinct values on the screen |
 |---|---|---|---|
-| `AVG_N=6` | 43 с | 54.9 мг | 1 |
-| `AVG_N=12` | **29 с** | **38.4 мг** | 1 |
+| `AVG_N=6` | 43 s | 54.9 mg | 1 |
+| `AVG_N=12` | **29 s** | **38.4 mg** | 1 |
 
-Новая конфигурация оказывается **и быстрее, и точнее**: выигрыш от допуска и
-меньшего числа опросов перекрывает потерю от длины окна.
+The new configuration turns out to be **both faster and more accurate**: the gain
+from the tolerance and fewer polls outweighs the loss from the window length.
 
-⚠️ **Это прогон, а не измерение на железе.** Время усадки 29 с на реальной
-гире не подтверждено — нужен прогон с эталоном в руках.
+⚠️ **This is a run, not a measurement on the hardware.** The 29 s settling time on
+a real weight is not confirmed — a run with the reference in hand is needed.
 
-### Чего окно не покупает
+### What the window does not buy
 
-Достоверной последней цифры 0.01 г. При σ среднего 15 мг она всё ещё
-забита шумом. Держать число делает фиксация, а не длина окна. Честное
-разрешение прибора остаётся **0.05 г**.
+A trustworthy last digit of 0.01 g. With a mean σ of 15 mg it is still swamped by
+noise. What holds the number is the freeze, not the window length. The honest
+resolution of the device remains **0.05 g**.
 
 
 
-## Точность измерена парным методом (2026-10-08)
+## Accuracy measured by the paired method (2026-10-08)
 
-Гиря **73.03 г**, две точки сняты подряд, зазор около минуты:
+Weight **73.03 g**, two points taken back to back, a gap of about a minute:
 
-| | Отсчёты |
+| | Counts |
 |---|---|
-| Пустая платформа (эталонная точка) | 419 006 |
-| С гирей | 450 103 |
-| Дельта | 31 097 |
+| Empty platform (reference point) | 419 006 |
+| With the weight | 450 103 |
+| Delta | 31 097 |
 
 ```
-масса    73.066 г    эталон 73.03 г
-ОШИБКА  +0.036 г  (+0.05 %)
+mass     73.066 g    reference 73.03 g
+ERROR  +0.036 g  (+0.05 %)
 ```
 
-**`cal_factor` = 425.6 подтверждён.** Предлагаемый по этому замеру — 425.81, расхождение
-0.05 %, что в пределах шума одной точки. Записывать не стал: выигрыша нет, а NVS
-лишний раз переписывается.
+**`cal_factor` = 425.6 is confirmed.** Proposed from this measurement — 425.81, a
+discrepancy of 0.05 %, which is within the noise of a single point. I did not
+write it: there is no gain, and the NVS gets rewritten for nothing.
 
-⚠️ **Не перепроверено после 2026-10-10.** Тогда при эталоне на платформе прибор
-показывал 73.4 г против 73.03 г, то есть **+0.4 г** — в шесть раз больше
-заявленных ±0.07 г. Тогда же исправлены три ошибки (см. следующий раздел),
-среди них якорь авто-нуля, дававший +293 мг к каждому весу. После правок
-показание **не переизмерено**: тара в NVS была снята в прошлой сессии, а
-снимать её заново нужно на пустой платформе, то есть руками пользователя.
-**Прежние цифры точности пока считать неподтверждёнными.**
+⚠️ **Not re-verified after 2026-10-10.** At that time, with the reference on the
+platform, the device showed 73.4 g against 73.03 g, that is **+0.4 g** — six
+times more than the stated ±0.07 g. Three errors were fixed at the same time (see
+the next section), among them the auto-zero anchor, which added +293 mg to every
+weight. After the fixes the reading has **not been re-measured**: the tare in NVS
+was taken in the previous session, and taking it afresh needs an empty platform,
+i.e. the user's own hands. **The earlier accuracy figures are still unconfirmed.**
 
-### Почему два предыдущих замера дали +1.0 г и +1.4 %
+### Why the two previous measurements gave +1.0 g and +1.4 %
 
-Обе точки брались в разные моменты, с разрывом в минуты, и платформу в это время
-касались — разброс покоя между точками и есть величина расхождения (позже
-измерено: ±0.11 г при нетронутой платформе). Дельта 31 505 отсчётов при пустой
-платформе, прочитанной на 350 отсчётов ниже, даёт ровно 73.09 г при 425.6.
+Both points were taken at different moments, minutes apart, and the platform was
+touched in between — the spread of rest between the points is exactly the magnitude
+of the discrepancy (measured later: ±0.11 g untouched). A delta of 31 505 counts
+with an empty platform read 350 counts lower gives exactly 73.09 g at 425.6.
 
-**Вывод, который стоит запомнить: ошибка в 1 г на этом приборе целиком
-объясняется методикой, а не железом.** Прежний `cal_factor` записывать не стал
-именно поэтому — иначе в NVS легла бы чужая ошибка.
+**A conclusion worth remembering: an error of 1 g on this device is explained
+entirely by the methodology, not by the hardware.** That is why I did not write the
+previous `cal_factor` — otherwise a foreign error would have landed in the NVS.
 
-### Что реально ограничивает точность
+### What really limits accuracy
 
-| Параметр | Значение |
+| Parameter | Value |
 |---|---|
-| Погрешность при правильной методике | **±0.04…0.07 г** |
-| Шум одной точки (σ) | 103 мг — главный ограничитель |
-| Уход нуля за 10 мин | −3 отсчёта, тренд +3 мг/мин |
-| Частота | 11.29 Гц стабильно |
-| Провалы чтения / WDT | 0 / 0 |
+| Uncertainty with correct methodology | **±0.04…0.07 g** |
+| Noise of a single point (σ) | 103 mg — the main limiter |
+| Zero walk-off over 10 min | −3 counts, trend +3 mg/min |
+| Rate | 11.29 Hz steadily |
+| Read failures / WDT | 0 / 0 |
 
-Цель 0.01 г из ТЗ недостижима не из-за железа: при σ = 103 мг допуск ±5 мг
-потребовал бы усреднения 40 секунд. Дрейфа, который считался главным
-ограничителем, нет — см. раздел «Дрейфа нет».
+The 0.01 g target from the specification is unreachable not because of the hardware:
+with σ = 103 mg a tolerance of ±5 mg would require 40 seconds of averaging. The
+drift considered the main limiter does not exist — see "There is no drift".
 
-### Регламент взвешивания
+### Weighing procedure
 
-1. Дать платформе устояться и не касаться её.
-2. Снять тару.
-3. Взвешивать.
+1. Let the platform settle and do not touch it.
+2. Take the tare.
+3. Weigh.
 
-Тару нельзя брать рано (замеренная ошибка — 1.8 г) и нельзя разносить точки
-калибровки на минуты.
+The tare must not be taken early (the measured error is 1.8 g), and the
+calibration points must not be spread minutes apart.
 
 
-## Взрывы шума — это механическая оседка, а не поломка (2026-10-10)
+## Noise bursts are mechanical settling, not a breakdown (2026-10-10)
 
-Разбирались, почему сигнал то стабилен, то разваливается. Разобран и закрыт.
+We were working out why the signal is sometimes stable and sometimes falls apart. Investigated and closed.
 
-### Что показала форма сигнала
+### What the signal shape showed
 
-Захват сырых отсчётов, 507 отсчёков, платформа с эталоном:
+Capture of raw counts, 507 samples, platform with the reference:
 
-| Отсчёты | Медиана | Размах |
+| Counts | Median | Spread |
 |---|---|---|
 | 0-100 | ~450 000 | 6 000-12 000 |
-| 150-199 | переход, значения от 418 608 до 461 709 | 43 101 |
-| 200-507 | **418 900, размах 71-234** | 71-234 |
+| 150-199 | transition, values from 418 608 to 461 709 | 43 101 |
+| 200-507 | **418 900, spread 71-234** | 71-234 |
 
-То же в других захватах: первые 350 отсчёков шумят, дальше размах 163-238.
+The same in other captures: the first 350 counts are noisy, after that the spread is 163-238.
 
-**После того как платформа успокоилась, сигнал становится очень чистым.**
-Значит это оседка после возмущения, а не электрические помехи.
+**After the platform settles down, the signal becomes very clean.** That means
+this is settling after a disturbance, not electrical interference.
 
-### Проверка на неподвижной платформе
+### Check on a motionless platform
 
 | | |
 |---|---|
-| sigma | **112 мг** |
-| размах | 754 мг |
-| медиана по шестым | 419 333 -> 419 393 |
+| sigma | **112 mg** |
+| spread | 754 mg |
+| median by sixths | 419 333 -> 419 393 |
 
-**Электроника в порядке.**
+**The electronics are fine.**
 
-### Что исключено замером, а не рассуждением
+### What was ruled out by measurement, not by reasoning
 
-| Версия | Как проверена | Итог |
+| Hypothesis | How it was checked | Outcome |
 |---|---|---|
-| Питание проседает | Мультиметр: модуль 3.26 В, плата 3.27 В, стабильно | **опровергнута** |
-| Помеха от своего WiFi | Радио погашено (`x 1`), sigma всё равно до 3180 мг | **опровергнута** |
-| Плохой антенный разъём | Антенна — печатная дорожка, разъёма нет | **нечего проверять** |
-| Испорченные чтения | В чистых захватах ни одного `-1` или `0x3FFFFF` | **опровергнута** |
+| The supply sags | Multimeter: module 3.26 V, board 3.27 V, stable | **disproved** |
+| Interference from our own WiFi | Radio switched off (`x 1`), sigma still up to 3180 mg | **disproved** |
+| Bad antenna connector | The antenna is a printed trace, there is no connector | **nothing to check** |
+| Corrupted reads | In clean captures not a single `-1` or `0x3FFFFF` | **disproved** |
 
-⚠️ **Мультиметр между A+ и A- эту задачу не решает.** Ожидаемая величина
-для 73 г — около 80 мкВ, измеренное изменение — 10 мкВ, это один разряд
-дисплея. Погрешность самого прибора на уровне 0.03 мВ сравнима с измеренным.
-**Нужен осциллограф**, который увидит и пульсацию возбуждения, и сигнал.
+⚠️ **A multimeter between A+ and A- does not solve this task.** The expected magnitude
+for 73 g is about 80 µV, the measured change is 10 µV, that is one count of the display.
+The uncertainty of the instrument itself at the 0.03 mV level is comparable.
+**An oscilloscope is needed**, one that sees both the ripple of the excitation and the signal.
 
-### Практический вывод
+### Practical conclusion
 
-После нажатия «обнулить» платформу нужно **не трогать и дать осесть**.
-Ноль держится, пока нет возмущений.
+After pressing "zero", the platform must be **left alone and allowed to settle**.
+The zero holds as long as there are no disturbances.
 
 
-## Три молчаливых ошибки, найденные 2026-10-10
+## Three silent errors found on 2026-10-10
 
-Все три не давали ни ошибки, ни красного индикатора — только неверные числа.
+None of the three produced an error or a red indicator — only wrong numbers.
 
-### 1. Тара при загрузке обнуляла груз
+### 1. The tare at boot was zeroing the load
 
-Перезагрузка при эталоне на платформе: прибор брал тару на уровне **450 023**
-и показывал уверенные **0.000 г**. Груз не исчезал — его молча съедали.
+Reboot with the reference on the platform: the device took the tare at the level
+**450 023** and confidently displayed **0.000 g**. The load was silently swallowed.
 
-Теперь авто-тара сверяется с сохранённой тарой пользователя:
+Now the auto-tare is checked against the user's stored tare:
 
 | | |
 |---|---|
-| Допуск | **851 отсчёт ≈ 2 г** |
-| Измеренный размах покоя | 0.6 г размах |
-| Запас | примерно в восемь раз |
+| Tolerance | **851 counts ≈ 2 g** |
+| Measured rest spread | 0.6 g spread |
+| Headroom | roughly eight times |
 
-Пустая платформа никогда не будет принята за груз, а любой реальный эталон
-останется нетронутым. Если в NVS тары нет — сравнивать не с чем, тара
-берётся как раньше.
+An empty platform will never be taken for a load, and any real reference will
+remain untouched. If there is no tare in the NVS there is nothing to compare
+against, and the tare is taken as before.
 
 ```
 W weight: NOT taring at boot: platform reads 31191 counts from the stored
 tare 419002, which is 73 g - looks like a load is on it.
 ```
 
-⚠️ **Молча неверное число опаснее видимо неверного.** Ноль вместо 73 г
-невозможно заметить, а −9.8 г сам попросит тару. Этот принцип выбирался
-осознанно, а не по остаточному принципу.
+⚠️ **A silently wrong number is more dangerous than a visibly wrong one.** A zero
+instead of 73 g is impossible to notice, whereas −9.8 g will ask for a tare by
+itself. This principle was chosen deliberately, and not by residual principle.
 
-### 2. `cal_factor` терялся при каждой перезагрузке
+### 2. `cal_factor` was lost on every reboot
 
-Записывался через `nvs_set_blob`, читался через `nvs_get_i32`. Чтение blob
-как целого всегда даёт ошибку типа, поэтому каждый запуск писал
-`cal_factor missing or invalid` и подставлял встроенное 425.60.
+It was written with `nvs_set_blob` and read with `nvs_get_i32`. Reading a blob as
+an integer always gives a type error, so every boot printed
+`cal_factor missing or invalid` and substituted the built-in 425.60.
 
-**Калибровка командой `m` записывалась, применялась и молча терялась при
-следующей перезагрузке.** Теперь читается тем же типом, каким пишется.
+**Calibration with the `m` command was written, applied, and silently lost on the
+next reboot.** Now it is read back with the same type it is written with.
 
-### 3. Якорь авто-нуля не совпадал с тарой из NVS
+### 3. The auto-zero anchor did not match the tare from NVS
 
 ```c
 scale_filter_init(&filter, 425.6f, 418857);   /* azt_anchor = 418857 */
 nvs_load(&filter);                             /* tare_offset = 419002 */
 ```
 
-`scale_filter_init` ставит `azt_anchor` из переданного значения, а задача
-передавала зашитую 418857. Реальная тара грузилась в `tare_offset`, и якорь
-оставался на встроенном. **Каждое показание после загрузки получало смещение,
-равное разнице двух тар**, и оно растёт по мере того, как сохранённая тара уезжает.
+`scale_filter_init` sets `azt_anchor` from the value passed in, and the task
+passed the hardcoded 418857. The real tare was loaded into `tare_offset`, and the
+anchor stayed on the built-in one. **Every reading after boot got an offset equal
+to the difference of the two tares**, and it grows as the stored tare drifts away.
 
-Замерено снаружи: якорь 418 878 против тары 419 002 = **+293 мг к каждому
-весу**. После правки — 16 отсчётов = 37 мг, в пределах шума.
+Measured from outside: anchor 418 878 against a tare of 419 002 = **+293 mg added
+to every weight**. After the fix — 16 counts = 37 mg, within the noise.
 
-**Как проверять якорь снаружи** (полезно после любой правки фильтра):
+**How to check the anchor from outside** (useful after any filter change):
 
 ```python
-anchor = counts - value * cal_factor     # должно совпасть с tare_offset
+anchor = counts - value * cal_factor     # must match tare_offset
 ```
 
 
-## Грабли, на которые уже наступили
+## Gotchas already stepped on
 
-1. **HX711 требует 25-го импульса SCK** после 24 бит данных. Без него чип
-   остаётся в состоянии чтения, DOUT не поднимается, следующее чтение отдаёт
-   мусор. Симптом: каждый второй отсчёт `-1`, частота вдвое ниже. Легко принять
-   за ошибку проводки. Диагностика: мусор приходил ровно через 1043 мкс — время
-   передачи 24 бит.
-   **Уточнение 2026-10-08:** тот же симптом (`-1`, `0x3FFFFF`) даёт не только
-   забытый импульс в коде. Чип может **потерять счёт своих же тактов**, если
-   период SCK стал неопределённым — см. раздел про маску прерываний. Драйвер
-   был написан верно и отдавал ровно 25 тактов; виновато было прерывание.
-2. **Регистра CR1 не существует.** Прежний код слал 8 «битов CR1», то есть 8
-   лишних тактов = 33 за период вместо 25–27, ровно тот случай ошибки, о котором
-   предупреждает даташит. Удалён полностью.
-3. **В ESP-IDF v6 драйвер GPIO переехал** в компонент `esp_driver_gpio`, поэтому
-   в `main/CMakeLists.txt` нужно `REQUIRES esp_driver_gpio`. Сам include остаётся
-   `driver/gpio.h`.
-4. **Порт — CH9102 USB-UART, а не нативный USB S3.** Консоль и прошивка через
-   UART0 (GPIO43/44). Нативный USB (VID `303a`) — отдельное устройство.
-5. **Первая сборка требует `idf.py set-target esp32s3`.**
-6. **Массу эталона брать по памяти нельзя.** Я принял 5 монет по 5 рублей за 15 г и
-   разошёл `cal_factor` вдвое (871 вместо 425). Реальный вес — 30.63 г. Прибор был
-   прав дважды подряд, я — нет. **Второй эталон в той же сессии поймал ошибку.**
-7. **Расхождение в 2 раза сначала выглядит как поломка железа.** Я построил версии
-   про «платформа опирается на стол» и «залипание ячейки», не перепроверив собственную
-   арифметику. Сначала пересчитывай свои числа, потом ищи неисправность.
-8. **Замеры разных дней нельзя сравнивать напрямую.** Тара «вчера» 418 602 и «сегодня»
-   418 815 — это разные дрейфы. Все точки одной калибровки снимать подряд.
-9. **`esp_wifi_set_config` для точки доступа идёт через `WIFI_IF_AP`.** Через
-   `WIFI_IF_STA` возвращается `ESP_ERR_WIFI_MODE`, и пять попыток с паузой не
-   помогают — режим надо сменить на `WIFI_MODE_NULL` и ждать.
-10. **В ESP-IDF v6 HTTP-клиенту нужен `perform()`.** Без него `read()` вернёт 0
-    байт и статус 0, даже если сервер жив: запрос просто не отправлен.
-11. **`ESP_ERROR_CHECK` в обработчике отказа = ресет-петля.** Точка доступа падала
-    внутри `ap_start()`, плата перезагружалась каждые 16 секунд. Обработчики
-    восстановления не должны вызывать abort.
-12. **Скан WiFi не запускается, пока станция лезет в авторизацию.** Нужен флаг,
-    на который смотрит обработчик переподключения, иначе `ESP_ERR_WIFI_STATE`.
+1. **The HX711 requires a 25th SCK pulse** after the 24 data bits. Without it the
+   chip stays in the reading state, DOUT does not go high, and the next read
+   returns garbage. Symptom: every second count is `-1`, the rate is half. Easy to
+   mistake for a wiring fault. Diagnosis: the garbage arrived exactly after
+   1043 µs — the transfer time of 24 bits. **Clarification 2026-10-08:** the same
+   symptom (`-1`, `0x3FFFFF`) is caused not only by a forgotten pulse in the
+   code. The chip can **lose count of its own clocks** if the SCK period became
+   indeterminate — see the section on the interrupt mask. The driver was written
+   correctly and issued exactly 25 clocks; the interrupt was to blame.
+2. **The CR1 register does not exist.** The old code sent 8 "CR1 bits", that is
+   8 extra clocks = 33 per period instead of 25–27, exactly the error case the
+   datasheet warns about. Removed completely.
+3. **In ESP-IDF v6 the GPIO driver moved** into the `esp_driver_gpio` component,
+   so `main/CMakeLists.txt` needs `REQUIRES esp_driver_gpio`. The include itself
+   stays `driver/gpio.h`.
+4. **The port is a CH9102 USB-UART, not native S3 USB.** Console and flashing go
+   through UART0 (GPIO43/44). Native USB (VID `303a`) is a separate device.
+5. **The first build requires `idf.py set-target esp32s3`.**
+6. **The mass of a reference must not be taken from memory.** I took 5 coins of 5 rubles
+   for 15 g and got `cal_factor` wrong by a factor of two (871 instead of 425). The real
+   weight is 30.63 g. The device was right twice, I was not. **The second reference in the same session caught the error.**
+7. **A 2-fold discrepancy at first looks like a hardware fault.** I built
+   theories about "the platform rests on the table" and "the load cell sticking"
+   without rechecking my own arithmetic. Recalculate your numbers first, then look for a fault.
+8. **Measurements from different days cannot be compared directly.** The tare "yesterday"
+   of 418 602 and "today" of 418 815 are different drifts. Take all points of one calibration back to back.
+9. **`esp_wifi_set_config` for the access point goes through `WIFI_IF_AP`.**
+   Through `WIFI_IF_STA` it returns `ESP_ERR_WIFI_MODE`, and five retries with a pause
+   do not help — change the mode to `WIFI_MODE_NULL` and wait.
+10. **In ESP-IDF v6 the HTTP client needs `perform()`.** Without it `read()` will
+    return 0 bytes and status 0, even if the server is alive: the request was never sent.
+11. **`ESP_ERROR_CHECK` in the failure handler = a reset loop.** The access point
+    crashed inside `ap_start()`, and the board rebooted every 16 seconds. Recovery
+    handlers must not call abort.
+12. **The WiFi scan does not start while the station is authenticating.** A flag is
+    needed that the reconnection handler looks at, otherwise `ESP_ERR_WIFI_STATE`.
 
-## Известные риски этапов 3–5
+## Known risks of stages 3–5
 
-- **GPIO3 — страпинговый** (в ТЗ пропущен в списке). Назначен на BTN_UNIT с
-  INPUT_PULLUP; подтягивает вверх на reset. Стоит перенести на свободный пин.
-- **Зарезервированные GPIO шире, чем указано в ТЗ**: при Octal PSRAM заняты 26–37,
-  а не только 35–37.
-- **LVGL-буфер нельзя в PSRAM** — SPI DMA на S3 не читает оттуда. Нужен
-  внутренний DMA-совместимый буфер.
+- **GPIO3 is a strapping pin** (missing from the list in the specification). Assigned
+  to BTN_UNIT with INPUT_PULLUP; it is pulled high on reset. Move it to a free pin.
+- **The reserved GPIOs are broader than the specification says**: with Octal PSRAM,
+  26–37 are occupied, not only 35–37.
+- **The LVGL buffer must not be in PSRAM** — SPI DMA on the S3 cannot read from
+  there. An internal DMA-compatible buffer is needed.
 
-## Не выяснено
+## Not established
 
-## Целевая точность: 0.05 г (решено 2026-10-07)
+## Target accuracy: 0.05 g (decided 2026-10-07)
 
-**Заявленные 0.01 г из ТЗ официально сняты.** Целевая точность — **0.05 г на
-покое, 0.1 г в движении**. Без пайки, 11.3 Гц.
+**The specified 0.01 g from the specification is officially dropped.** The target
+accuracy is **0.05 g at rest, 0.1 g in motion**. No soldering, 11.3 Hz.
 
-Причина: при σ = 106 мг допуск ±5 мг потребовал бы 448 отсчётов = 40 секунд
-усреднения. При α=0.05..0.10 отфильтрованный шум 12.7–21.9 мг, что укладывается
-в 0.05 г, и оседание 2.7 с для весов приемлемо.
+Reason: with σ = 106 mg a tolerance of ±5 mg would require 448 counts = 40
+seconds of averaging. At α=0.05..0.10 the filtered noise is 12.7–21.9 mg, which
+fits inside 0.05 g, and a settling of 2.7 s is acceptable for a scale.
 
-## Что обязательно пересчитать из ТЗ под 0.05 г
+## What must be recalculated from the specification for 0.05 g
 
-Числа в ТЗ написаны под разрешение 0.01 г и при 0.05 г становятся вредными:
+The numbers in the spec are written for a 0.01 g resolution and become harmful at 0.05 g:
 
-| Параметр ТЗ | Значение | Что не так при 0.05 г |
+| Spec parameter | Value | What is wrong at 0.05 g |
 |---|---|---|
-| Deadband | ±0.03 г | Съедает больше половины отображаемой цифры |
-| AZT окно | ±0.05 г за 2 с | Срабатывает при нормальном использовании |
-| Индикатор STABLE | σ < 0.02 г за 10 отсч | Всегда «стабильно», т.к. считается на выходе EMA |
-| Разрядность табло | 0.01 г | Должна стать 0.05 г |
+| Deadband | ±0.03 g | Swallows more than half of the displayed digit |
+| AZT window | ±0.05 g in 2 s | Triggers in normal use |
+| STABLE indicator | σ < 0.02 g over 10 counts | Always "stable", because it is computed at the EMA output |
+| Display resolution | 0.01 g | Must become 0.05 g |
 
-**Пороги AZT и deadband выводить из измеренного шума, а не брать из ТЗ.**
+**The AZT and deadband thresholds must be derived from the measured noise, not taken from the spec.**
 
-Выведено из σ=45 отсчётов при α=0.10 (окно 9 отсчётов, σ_фильтр = 9.3 отсчёта):
+Derived from σ=45 counts at α=0.10 (a window of 9 counts, σ_filter = 9.3 counts):
 
-| Параметр | Значение ТЗ | Значение из шума | Почему так |
+| Parameter | Spec value | Value from the noise | Why |
 |---|---|---|---|
-| Deadband | ±0.03 г | **±0.066 г** (3σ_фильтр) | ТЗ даёт 0.28σ — слишком туго, шум не отсечётся |
-| Окно AZT | ±0.05 г / 2 с | **±0.11 г** (5σ_фильтр) | ТЗ даёт 0.47σ, AZT будет срабатывать впустую |
-| Порог STABLE | σ<0.02 г | **σ<0.21 г** на 10 сырых отсчётах (2σ) | Считать **до** EMA |
+| Deadband | ±0.03 g | **±0.066 g** (3σ_filter) | The spec gives 0.28σ — too tight, the noise will not be cut |
+| AZT window | ±0.05 g / 2 s | **±0.11 g** (5σ_filter) | The spec gives 0.47σ, AZT will trigger for nothing |
+| STABLE threshold | σ<0.02 g | **σ<0.21 g** over 10 raw counts (2σ) | Compute **before** EMA |
 
-Дополнительно, из анализа ТЗ ранее: индикатор STABLE надо считать **до** EMA
-(на сырых или медианных отсчётах), иначе он всегда горит. AZT надо отключать на
-шаге 1 мастера калибровки, иначе он съест истинный ноль.
-- **Гири для боевой калибровки.** Купить набор класса 0.1% (россыпь по 100 г —
-  копейки). Аптечные весы дают 0.01%, но упираются в 200 г = 3.3% диапазона;
-  кухонные берут 1327 г = 22%, но их реальная погрешность измерена как ±1 г.
-  **Пока гир нет: масштаб задают аптечные (161 г), верх диапазона проверяют
-  кухонными (1327 г).** `cal_factor` от этого не меняется.
-- **Проверить мультиметром VCC модуля = 3.3 В** под нагрузкой. 425 отсч/г теоретически
-  отвечает возбуждению ~3.3 В, так что косвенно всё сходится, но прямую проверку
-  напряжения никто не делал. Если VCC = 5 В, то DOUT = 5 В и GPIO16 под ударом.
-- **Репозиторий на GitHub не создан** — `gh` не авторизован, токен протух. Нужен
-  `gh auth login`. Git-идентичность сейчас `Antigravity AI <antigravity@google.com>`.
+Additionally, from the earlier analysis of the spec: the STABLE indicator must be
+computed **before** EMA (on raw or median counts), otherwise it is always lit. AZT
+must be disabled at step 1 of the calibration master, or it swallows the true zero.
+- **Calibration weights for production calibration.** Buy a set of class 0.1% (a
+  handful of 100 g pieces — pennies). The pharmacy scale gives 0.01% but tops out
+  at 200 g = 3.3% of range; the kitchen scale covers 1327 g = 22%, but its real
+  uncertainty measures as ±1 g. **While there are no weights: the pharmacy scale
+  sets the scale (161 g), the kitchen scale checks the top (1327 g).** `cal_factor` is unchanged.
+- **Check with a multimeter that the module VCC = 3.3 V** under load. 425 counts/g
+  theoretically corresponds to an excitation of ~3.3 V, so indirectly everything
+  agrees, but nobody has done a direct check. If VCC = 5 V, GPIO16 takes 5 V on DOUT.
+- **The GitHub repository is not created** — `gh` is not authorised, the token has
+  expired; `gh auth login` is needed. Git identity: `Antigravity AI <antigravity@google.com>`.
 
-## Этап 2: план (обновлён после калибровки)
+## Stage 2: plan (updated after calibration)
 
-Математику проверяем офлайн на `logs/v2_*.log` до появления UI.
+We verify the maths offline on `logs/v2_*.log` before the UI appears.
 
-1. **Фильтр офлайн**: median N=5 + адаптивный EMA + AZT + deadband. Проверить, что
-   даёт расчётные 12–35 мг и режет выбросы. Ориентиры измерений: 161 г → 68 692
-   отсчёта, 30 г → 13 014, тара → 418 815. **Пороги AZT/deadband выводить из
-   измеренного шума**, а не из ТЗ — см. таблицу пересчёта выше.
-2. **FreeRTOS**: Core 0 — измерение и фильтры, Core 1 — UI, обмен через очередь.
-3. **Дисплей ST7789**, кнопки, RGB на GPIO 48.
-4. **NVS** через Preferences, `magic_key` = 0xAA55BEEF, проверка `cal_factor == 0`.
-5. **Мастер калибровки** 2 точки, вход по удержанию CAL > 3 с. Значения по умолчанию
-   занести измерениями: `tare_offset` 418 815, `cal_factor` 425.2.
+1. **Filter offline**: median N=5 + adaptive EMA + AZT + deadband. Check that it
+   gives the calculated 12–35 mg and cuts outliers. Reference points from
+   measurements: 161 g → 68 692 counts, 30 g → 13 014, tare → 418 815. **Derive the
+   AZT/deadband thresholds from the measured noise**, not from the spec — see above.
+2. **FreeRTOS**: Core 0 — measurement and filters, Core 1 — UI, exchange via a queue.
+3. **ST7789 display**, buttons, RGB on GPIO 48.
+4. **NVS** via Preferences, `magic_key` = 0xAA55BEEF, check `cal_factor == 0`.
+5. **Calibration master**, 2 points, entry by holding CAL > 3 s. The defaults are
+   filled in from measurements: `tare_offset` 418 815, `cal_factor` 425.2.

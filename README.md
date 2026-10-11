@@ -1,123 +1,124 @@
 # ESP32 Scale
 
-Высокоточные электронные весы на ESP32-S3: ячейка 6 кг, преобразователь HX711,
-собственная прошивка на ESP-IDF и веб-интерфейс.
+High-precision electronic scales on an ESP32-S3: a 6 kg load cell, an HX711
+converter, custom firmware on ESP-IDF and a web interface.
 
-Из ESPHome, Arduino и любых внешних библиотек для измерения здесь ничего нет —
-только ESP-IDF и написанный здесь код.
+Nothing here comes from ESPHome, Arduino or any off-the-shelf measurement
+library — ESP-IDF and the code in this repository only.
 
-## Что прибор показывает на самом деле
+## What the instrument actually shows
 
-Не обещания из ТЗ, а измеренные числа. Методика — парный метод: пустая
-платформа снимается отдельной точкой, эталон кладётся отдельно, считается
-разница отсчётов.
+Not the numbers from the specification, but measured ones. The method is a
+paired measurement: the empty platform is captured as its own point, the
+reference is placed separately, and the difference in counts is what gets
+computed.
 
-| Параметр | Значение | Как получено |
+| Parameter | Value | How it was obtained |
 |---|---|---|
-| Частота съёма | **11.3 Гц** | ограничена железом, см. ниже |
-| Шум одного отсчёта | **110 мг** | 507 отсчётов на неподвижной платформе |
-| Шум среднего в приборе | **15 мг** | среднее по 45 отсчётам = 4.0 с |
-| Точность на эталоне 73.03 г | **+0.14 г (+0.20 %)** | две независимые пары, расхождение 9 мг |
-| Время до показания | **сразу** | среднее считается в приборе, не ждёт сеть |
+| Sampling rate | **11.3 Hz** | limited by the hardware, see below |
+| Noise of one sample | **110 mg** | 507 samples on a motionless platform |
+| Noise of the device-side mean | **15 mg** | mean over 45 samples = 4.0 s |
+| Accuracy on a 73.03 g reference | **+0.14 g (+0.20 %)** | two independent pairs, 9 mg apart |
+| Time to a reading | **immediate** | the mean is computed in the device, no network wait |
 
-Честная оговорка: пустая точка гуляет между сессиями на **195 мг**. Это и есть
-главный ограничитель точности — не прибор, у которого собственная
-погрешность 15 мг. Поэтому **обнулять надо перед каждым взвешиванием**.
+One honest caveat: the empty-platform point wanders by **195 mg** between
+sessions. That is the real limiter of accuracy, not the instrument, whose own
+uncertainty is 15 mg. Hence: **tare before every weighing.**
 
-## Железо и подключение
+## Hardware and wiring
 
-HX711 к ESP32-S3:
+HX711 to the ESP32-S3:
 
-| HX711 | ESP32-S3 | Примечание |
+| HX711 | ESP32-S3 | Note |
 |---|---|---|
-| VCC | **3V3** | HX711 выдаёт на DOUT уровень своего питания; при 5 В на GPIO16 прилетит 5 В |
+| VCC | **3V3** | the HX711 drives DOUT at its own supply level; on 5 V that puts 5 V on GPIO16 |
 | GND | GND | |
 | DOUT | GPIO16 | |
 | SCK | GPIO17 | |
 
-Ячейка 6 кг:
+6 kg load cell:
 
-| Провод | Куда |
+| Wire | Goes to |
 |---|---|
-| чёрный | E+ |
-| красный | E− |
-| зелёный | A− |
-| белый | A+ |
-| жёлтый | экран на GND |
+| black | E+ |
+| red | E− |
+| green | A− |
+| white | A+ |
+| yellow | shield to GND |
 
-**Нагрузку класть строго в центр платформы.**
+**Place the load dead centre on the platform.**
 
-### Почему частота не выше 11.3 Гц
+### Why the rate is not higher than 11.3 Hz
 
-Регистра конфигурации у HX711 нет. Частота задаётся уровнем на выводе 15:
-0 — 10 Гц, 1 — 80 Гц. Вывод 15 оставлен зашунтированным на землю, поэтому
-прибор работает на 11.3 Гц постоянно. Перепайка дала бы 80 SPS, но не дала бы
-точности: она определяется шумом и длиной окна усреднения, а не частотой.
+The HX711 has no configuration register. The rate is set by the level on pin
+15: 0 for 10 Hz, 1 for 80 Hz. Pin 15 is tied to ground, so the instrument runs
+at 11.3 Hz permanently. Rewiring it would give 80 SPS but would not improve
+accuracy: accuracy is set by the noise and by the length of the averaging
+window, not by the sampling rate.
 
-## Сборка и прошивка
+## Build and flash
 
 ```bash
 source ~/esp-idf/export.sh
 cd ~/ESP32_Scale
-idf.py set-target esp32s3      # только при первой сборке
+idf.py set-target esp32s3      # first build only
 idf.py build
 
 PORT=/dev/serial/by-id/usb-1a86_USB_Single_Serial_595B069397-if00
 idf.py -p "$PORT" -b 460800 flash
 ```
 
-**460800, а не 921600** — на CH9102 более высокая скорость ненадёжна.
+**460800, not 921600** — on the CH9102 anything faster is unreliable.
 
-Перед первой прошивкой создайте файл с настройками WiFi:
+Before the first flash, create the WiFi settings file:
 
 ```bash
 cp main/credentials.h.example main/credentials.h
-# вписать SSID и пароль
+# fill in SSID and password
 ```
 
-`main/credentials.h` в `.gitignore` и никогда не попадает в репозиторий.
-`main/credentials.h.example` — единственный файл с такими настройками, который
-отслеживается.
+`main/credentials.h` is in `.gitignore` and never reaches the repository.
+`main/credentials.h.example` is the only such file that is tracked.
 
-## Веб-интерфейс
+## Web interface
 
-Устройство подключается к точке доступа `home4` и получает адрес по DHCP,
-сейчас это `http://192.168.22.123/`.
+The device joins the `home4` access point and takes an address over DHCP, at
+the moment of writing `http://192.168.22.123/`.
 
-- Страница отдаётся со сжатием gzip: **4 573 байт** вместо 13 843.
-- Каждые 1500 мс прибор опрашивается и показывает новое значение.
-- Кнопка **«Обнулить»** — это тара.
-- Кнопка **«Авто-ноль»** включает и выключает слежение за нулём.
+- The page is served gzip-compressed: **4 073 bytes** instead of 12 491.
+- Every 1500 ms the device is polled and the reading updates.
+- **Zero** is the tare button.
+- **Auto-zero** turns the zero-tracking on and off.
 
-Если прибор подключился, но адрес не тот, посмотрите серийную консоль — там
-печатается выданный адрес.
+If the device is connected but the address is not that one, look at the serial
+console — it prints the address it was given.
 
-**Резервного режима точки доступа сейчас нет** — он отключён намеренно,
-по требованию. Устройство работает только как станция.
+**There is no access-point fallback at the moment** — it is disabled on
+purpose, by request. The device acts as a station only.
 
-## Серийная консоль
+## Serial console
 
-115200 бод. Полезные команды:
+115200 baud. The useful commands:
 
-| Команда | Действие |
+| Command | Action |
 |---|---|
-| `c` | текущее показание, σ, признаки нуля и стабильности |
-| `t` | тара |
-| `d [мин]` | следить за стабильностью нуля |
-| `m [г]` | спаренная калибровка с автодетектом груза |
-| `w` | константы фильтра и состояние |
-| `R` | выгрузка сырых отсчётов, записанных задачей измерения |
-| `h` | самопроверка HTTP-сервера |
-| `x 0\|1` | выключить/включить радио WiFi |
-| `T <дБм>` | мощность передачи на лету |
-| `G 0\|1` | маска прерываний вокруг чтения HX711 |
-| `s` | скан WiFi: SSID, RSSI, канал, шифрование |
-| `k <пароль>` | подменить пароль без пересборки |
-| `b <MAC>` | привязаться к точке доступа, `b off` — снять |
-| `p 0\|1`, `a 0..2` | PMF и режим авторизации |
-| `L 0\|1`, `M <MAC>` | отладочный лог WiFi и подмена MAC |
+| `c` | current reading, noise, zero and stability flags |
+| `t` | tare |
+| `d [min]` | watch zero stability |
+| `m [g]` | paired calibration with automatic load detection |
+| `w` | filter constants and state |
+| `R` | dump raw samples recorded by the measurement task |
+| `h` | HTTP server self-test |
+| `x 0\|1` | suspend / resume the WiFi radio |
+| `T <dBm>` | transmit power at runtime |
+| `G 0\|1` | interrupt mask around the HX711 read |
+| `s` | WiFi scan: SSID, RSSI, channel, encryption |
+| `k <password>` | replace the password without rebuilding |
+| `b <MAC>` | bind to a specific access point, `b off` to clear |
+| `p 0\|1`, `a 0..2` | PMF and authentication mode |
+| `L 0\|1`, `M <MAC>` | WiFi debug log and MAC override |
 
-Живой вывод вместо перенаправления в файл:
+For live output instead of redirecting to a file:
 
 ```bash
 python3 tools/serial_console.py --send 'R' --seconds 50
@@ -125,65 +126,66 @@ python3 tools/serial_console.py --send 'R' --seconds 50
 
 ## HTTP API
 
-| Метод и путь | Назначение |
+| Method and path | Purpose |
 |---|---|
-| `GET /` | страница |
-| `GET /api/weight` | текущее показание |
-| `POST /api/tare` | тара |
-| `POST /api/unit?u=0\|1\|2` | единицы: 0 — г, 1 — кг, 2 — oz |
-| `POST /api/azt?off` | выключить авто-ноль; без параметра — включить |
-| `POST /api/cal/start[?mass=г]` | мастер калибровки |
-| `GET /api/cal` | ход калибровки |
+| `GET /` | the page |
+| `GET /api/weight` | current reading |
+| `POST /api/tare` | tare |
+| `POST /api/unit?u=0\|1\|2` | units: 0 = g, 1 = kg, 2 = oz |
+| `POST /api/azt?off` | switch auto-zero off; no parameter switches it on |
+| `POST /api/cal/start[?mass=g]` | calibration wizard |
+| `GET /api/cal` | calibration progress |
 
-`/api/weight` отдаёт `value`, `grams`, `counts`, `sigma_mg` (шум одного отсчёта),
-а также `avg_grams`, `avg_sigma_mg`, `avg_n` — среднее в приборе и его
-стандартная ошибка. **Смотрите на `avg_sigma_mg`: он прямо говорит, насколько
-цифре можно доверять.**
+`/api/weight` returns `value`, `grams`, `counts`, `sigma_mg` (noise of a single
+sample), plus `avg_grams`, `avg_sigma_mg` and `avg_n` — the device-side mean and
+its standard error. **Look at `avg_sigma_mg`: it states outright how far the
+figure can be trusted.**
 
-## Устройство кода
+## Code layout
 
-| Модуль | Роль |
+| Module | Role |
 |---|---|
-| `main/hx711.{c,h}` | драйвер HX711, ровно 25 тактов, без записи конфигурации |
-| `main/scale_filter.c` | median(5) → адаптивное EMA → авто-ноль → деадбенд |
-| `main/weight_task.c` | задача измерения на **Core 0**, NVS, среднее по 45 отсчётам |
-| `main/web_server.c` | WiFi и HTTP на **Core 1** |
-| `main/scale_app.c` | инициализация и серийная консоль |
-| `main/web/index.html` | исходник интерфейса, читаемый и с комментариями |
+| `main/hx711.{c,h}` | HX711 driver, exactly 25 clocks, no configuration writes |
+| `main/scale_filter.c` | median(5) → adaptive EMA → auto-zero → deadband |
+| `main/weight_task.c` | measurement task on **Core 0**, NVS, mean over 45 samples |
+| `main/web_server.c` | WiFi and HTTP on **Core 1** |
+| `main/scale_app.c` | initialisation and the serial console |
+| `main/web/index.html` | interface source, readable and commented |
 
-Правило разделения закреплено не стильно, а по необходимости: **Core 0
-занимается только измерением, Core 1 — только сетью и интерфейсом.** Задача
-измерения просыпается непрерывно, а сетевой стек на том же ядре оказывался
-голодным и не обрабатывал подтверждения TCP — страница при этом загружалась
-на 4 500 байт и обрывалась.
+The core split is not a style preference but a necessity: **Core 0 does
+measurement only, Core 1 does networking and the interface only.** The
+measurement task wakes continuously, and with the network stack on the same core
+it went hungry and stopped processing TCP acknowledgements — the page would
+load 4 500 bytes and then stop.
 
-`main/index_html.h` генерируется из `main/web/index.html` скриптом
-`tools/embed_web.py` при сборке и тоже отслеживается в репозитории, чтобы
-свежий клон собирался без Python. **Править надо HTML, а не заголовок.**
+`main/index_html.h` is generated from `main/web/index.html` by
+`tools/embed_web.py` during the build, and is tracked in the repository so a
+fresh clone builds without Python. **Edit the HTML, not the header.**
 
-## Известные ограничения
+## Known limitations
 
-- **Пустая точка гуляет на 195 мг между сессиями.** Это ограничитель точности.
-  Обнуляйте перед взвешиванием.
-- **WiFi в этом месте ненадёжен.** Измерено: потери от 0 до 100 %, канал
-  колеблется сам, по времени. Мощность подобрана (17 дБм против прежних 8), но
-  физику это не чинит.
-- **Мультиметр не годятся для диагностики ячейки.** Ожидаемый сигнал для 73 г —
-  около 80 мкВ, обычный мультиметр на таком уровне показывает свою
-  погрешность. Нужен осциллограф.
-- **Переход в точку доступа отключён.** Если станция не подключится, прибор
-  останется без веб-интерфейса. Включается одной константой
-  `AP_FALLBACK_ENABLED` в `main/web_server.c`.
-- **Страница и прошивка связаны.** `main/index_html.h` и `main/web/index.html`
-  должны быть из одного коммита: интерфейс ждёт от API поле `avg_grams`, и
-  старая прошивка его не отдаст — цифра на экране станет пустой.
+- **The empty-platform point wanders 195 mg between sessions.** This is the
+  limiter of accuracy. Tare before weighing.
+- **WiFi is unreliable in this location.** Measured: loss swings between 0 and
+  100 % and the link wanders on its own over time. Transmit power has been
+  tuned (17 dBm, up from 8), but software cannot fix the physics.
+- **A multimeter is not good enough to diagnose the cell.** The expected signal
+  for 73 g is about 80 µV, and an ordinary meter reports its own error at that
+  level. An oscilloscope is needed.
+- **The access-point fallback is disabled.** If the station cannot connect, the
+  device will have no web interface. Re-enabled by setting `AP_FALLBACK_ENABLED`
+  in `main/web_server.c`.
+- **The page and the firmware are coupled.** The interface expects `avg_grams`
+  from the API. Flash an old page from a browser cache onto new firmware and the
+  figure comes up empty.
 
-## Где искать историю измерений
+## Where the measurement history lives
 
-`AGENTS.md` — рабочая тетрадь проекта: все измеренные числа, найденные грабли
-и отвергнутые версии с указанием, чем именно они опровергнуты. Там же записано,
-почему частота ограничена 11.3 Гц, почему нужна маска прерываний и почему
-усреднение считается в приборе, а не в браузере.
+`AGENTS.md` is the project's working notebook: every measured number, every
+mistake that was stepped in, and every rejected hypothesis together with what
+disproved it. It also records why the rate is stuck at 11.3 Hz, why the read
+needs an interrupt mask, and why averaging is done in the device rather than in
+the browser.
 
-`docs/stage1-findings.md` — результаты этапа 1: пригодность железа, калибровка,
-расчёты достижимой точности.
+`docs/stage1-findings.md` holds the stage 1 results: hardware suitability,
+calibration, and calculations of achievable accuracy.
