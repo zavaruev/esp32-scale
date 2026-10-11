@@ -39,6 +39,7 @@ def main():
 
     with open(SRC, "r", encoding="utf-8") as fh:
         html = fh.read()
+    _check_comments(html)
     raw_len = len(html.encode("utf-8"))
     data = _minify_html(html).encode("utf-8")
 
@@ -172,6 +173,28 @@ def _minify_js(js):
     js = _re.sub(r"^[ \t]+", "", js, flags=_re.M)
     js = _re.sub(r"[ \t]{2,}", " ", js)
     return "\n".join(l for l in js.split("\n") if l.strip())
+
+
+def _check_comments(html):
+    """Refuse to build a page whose HTML comments do not pair up.
+
+    An unclosed <!-- comment is not caught by _HTML_COMMENT, so the text of the
+    comment survives into the output verbatim. The browser then parses it as body
+    text, which is invisible to every check that looks at the CSS or at the
+    widths - and it costs real layout: a comment orphaned this way on 2026-10-11
+    became a 350 px text node and pushed the whole page below the fold, so a
+    375 x 667 phone went from fitting exactly to needing a 923 px scroll.
+
+    Failing the build is the point. The mistake is in the source and should be
+    seen there, not on the scale.
+    """
+    opened = len(_re.findall(r"<!--", html))
+    closed = len(_re.findall(r"-->", html))
+    if opened != closed:
+        sys.exit(
+            "%s: %d '<!--' but %d '-->' - an unclosed HTML comment.\n"
+            "The comment text would be emitted as page text and shift the layout."
+            % (SRC, opened, closed))
 
 
 def _minify_html(html):

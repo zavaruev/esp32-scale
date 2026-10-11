@@ -8,27 +8,26 @@
 <!-- Icon inline as an SVG data URI, on purpose.
      A separate /favicon.ico would be one more HTTP request, and this link loses
      anywhere from 0 to 100 % of its packets - requests are the expensive thing
-     here, not bytes. This costs about 280 bytes inside a page that gzips to
-     5 012.
+     here, not bytes. This costs about 460 bytes inside a page that gzips to
+     about 6.5 kB.
 
      The badge is Near-Black Tile 1, so it reads on both light and dark browser
-     chrome, and it takes only two shapes so it survives being scaled to 16 px.
+     chrome.
 
-     The weight is a trapezoid, and that is not a detail: the first attempt was
-     a dome - flat bottom, arched top - which at 32 px and up read as a bell or a
-     mailbox, not as a load. A trapezoid, wider at the bottom, is the shape that
-     says "weight" at a glance.
+     The mark is the instrument itself, not an abstract glyph. Five candidates
+     were rendered and judged at 16, 20, 24, 32 and 48 px on light and dark,
+     rather than read off the markup, and three earlier rounds were rejected the
+     same way: a load on a bar read as a cone or a bell, a balance beam
+     collapsed into a thin cross with invisible pans, and a dial gauge read as a
+     pressure gauge, which is a different instrument.
 
-     The second attempt was correct in shape but too small to read: at 16 px it
-     was a blob. The shapes now fill the badge - the platform runs almost the
-     full width and the trapezoid covers 37 % of it, against 44 % in the smaller
-     version but spread over a much larger area. A carrying handle was tried and
-     dropped: at 16 px it collapses into a smudge. A scale-housing silhouette was
-     tried and dropped too: at 16 px the display window reads as a face.
-
-     All of them were rendered at 16, 20, 24, 32 and 64 px on light and dark
-     rather than judged from the markup. -->
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23272729'/%3E%3Crect x='2' y='21' width='28' height='5' rx='2.5' fill='%232997ff'/%3E%3Cpath d='M13 5h6l6 16H7z' fill='%23fff'/%3E%3C/svg%3E">
+     What makes this one say "scales" is the combination - blue platform across
+     the top, body below it, a display window, and two feet. Platform and feet
+     are the two cues that survive being scaled down to 16 px; the display window
+     is what makes it an instrument rather than a box, and the feet are what
+     stop it reading as a washing machine. A housing without feet was tried and
+     dropped for exactly that reason. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23272729'/%3E%3Crect x='5' y='6' width='22' height='3' rx='1.5' fill='%232997ff'/%3E%3Crect x='8' y='11' width='16' height='12' rx='2' fill='%23fff'/%3E%3Crect x='11' y='15' width='10' height='4' rx='.8' fill='%23272729'/%3E%3Crect x='8' y='25' width='5' height='3.5' rx='1.75' fill='%23fff'/%3E%3Crect x='19' y='25' width='5' height='3.5' rx='1.75' fill='%23fff'/%3E%3C/svg%3E">
 
 <!-- Theme applied before the first paint. This has to run in <head>: a script
      at the end of the body would let the light background paint first and then
@@ -68,6 +67,11 @@
   --chip-off-line:rgba(255,255,255,.30);
   --chip-on:#2997ff;
   --chip-on-line:#2997ff;
+
+  /* Tooltips invert against the page so they read the same way in both themes:
+     dark bubble on the light page, light bubble on the dark one. */
+  --tip-bg:#1d1d1f;
+  --tip-fg:#ffffff;
 }
 
 /* Night mode. Only the roles change - no component rule below knows which theme
@@ -95,6 +99,8 @@
   --chip-off-line:rgba(255,255,255,.20);
   --chip-on:#2997ff;
   --chip-on-line:#2997ff;
+  --tip-bg:#f5f5f7;
+  --tip-fg:#1d1d1f;
   /* The focus ring has to stay visible on black; Focus Blue at 2.6:1 on white
      becomes 3.4:1 here, which is enough for a non-text indicator. */
   --primary-focus:#2997ff;
@@ -180,7 +186,7 @@ body{
   opacity:.55;margin-left:12px;
 }
 
-.chips{margin-top:40px;display:flex;gap:12px;justify-content:center}
+.chips{margin-top:40px;display:flex;gap:12px;justify-content:center;position:relative}
 /* Contrast of the off state used to be white at opacity .4, which measured
    3.63:1 on the tile - under the 4.5:1 floor for 12 px text. Opacity was also
    the wrong mechanism: it dimmed the border along with the text, so the
@@ -195,8 +201,58 @@ body{
   padding:7px 14px;border-radius:var(--pill);
   border:1px solid var(--chip-off-line);color:var(--chip-off);
   transition:color .18s,border-color .18s;
+  position:relative;
 }
 .chip.on{border-color:var(--chip-on-line);color:var(--chip-on)}
+.chip:focus-visible{outline:2px solid var(--primary-on-dark);outline-offset:2px}
+/* Tooltips. Shared by the status chips and the three action buttons, so the
+   bubble is defined once. Scoped with .has-tip rather than .btn so that the unit
+   buttons and the calibration buttons do not sprout explanations they do not
+   need - g, kg and oz speak for themselves.
+
+   A pseudo-element on the element itself rather than a title= attribute: the
+   native one is slow to appear, cannot be styled to match the page, and on some
+   browsers never appears at all for touch.
+   Shown on hover, on keyboard focus, and on tap - .tip-open is set by the
+   handler below, because the primary screen for this instrument is a phone and a
+   phone has no hover.
+
+   Hidden with display:none, NOT visibility:hidden. A visibility:hidden box is
+   still generated, so it still contributes to scrollable overflow, and the
+   centred bubbles made the document 11 px wider than a 375 px viewport - a
+   horizontal scrollbar on the very phone screen this layout was fitted to. The
+   fade is kept by animating opacity across the display change instead. */
+.chip::after,.has-tip::after{
+  content:attr(data-tip);
+  position:absolute;top:calc(100% + 9px);left:50%;
+  transform:translateX(-50%);
+  z-index:5;
+  width:max-content;max-width:min(252px,72vw);
+  padding:8px 11px;border-radius:10px;
+  background:var(--tip-bg);color:var(--tip-fg);
+  font-size:12px;line-height:1.34;letter-spacing:-.12px;font-weight:400;
+  text-align:left;white-space:normal;
+  box-shadow:0 4px 16px rgba(0,0,0,.28);
+  display:none;pointer-events:none;
+  /* box-sizing has to be repeated here. The universal selector does NOT match
+     pseudo-elements, so the border-box reset above never reaches this bubble and
+     it stayed content-box: the 252 px max-width applied to the content alone and
+     the 22 px of padding were added on top, making it 274 px. That is 11 px too
+     wide on the right for a centred chip, and it put a horizontal scrollbar on
+     a 375 px phone screen. Only the centred chips overflowed - the first and
+     last anchor to their own edge, so the extra width grew inwards. */
+  box-sizing:border-box;
+}
+.chip:hover::after,.chip:focus-visible::after,.chip.tip-open::after,
+.has-tip:hover::after,.has-tip:focus-visible::after,.has-tip.tip-open::after{
+  display:block;animation:tip-fade .15s ease both;
+}
+@keyframes tip-fade{from{opacity:0}to{opacity:1}}
+/* The ends of a row anchor to their own edge. A bubble centred on the first or
+   last item runs past the edge of the screen, which is how the horizontal
+   scrollbar first appeared. Both rows need it: the chips and the actions. */
+.chips>:first-child::after,.actions>:first-child::after{left:0;transform:none}
+.chips>:last-child::after,.actions>:last-child::after{left:auto;right:0;transform:none}
 
 /* Buttons. Pill radius is the brand action signal; active state is
    scale(0.95) on every one of them. */
@@ -205,6 +261,7 @@ body{
   font-size:17px;line-height:1;letter-spacing:-0.374px;
   border-radius:var(--pill);padding:11px 22px;border:0;cursor:pointer;
   transition:transform .12s;
+  position:relative;   /* the tooltip anchors to this */
 }
 .btn:active{transform:scale(.95)}
 .btn:focus-visible{outline:2px solid var(--primary-focus);outline-offset:2px}
@@ -371,20 +428,31 @@ footer{
   <div class="tagline">Precision scale</div>
   <div><span class="hero"><span id="weight">0.00</span><span class="hero-unit" id="unit">g</span></span></div>
   <div class="chips">
-    <span class="chip" id="chip-stable">STABLE</span>
-    <span class="chip" id="chip-zero">ZERO</span>
-    <span class="chip" id="chip-tare">TARE</span>
-    <span class="chip" id="chip-avg">AVG</span>
-    <span class="chip" id="chip-lock">HOLD</span>
+    <!-- data-tip carries the explanation. It is shown on hover, on keyboard
+         focus and on tap, because a scale gets used on a phone as much as on a
+         desk, and a phone has no hover. -->
+    <span class="chip" id="chip-stable" tabindex="0"
+          data-tip="Platform is quiet — samples stay inside the noise band">STABLE</span>
+    <span class="chip" id="chip-zero" tabindex="0"
+          data-tip="Nothing on the platform: the reading is inside the deadband">ZERO</span>
+    <span class="chip" id="chip-tare" tabindex="0"
+          data-tip="A tare is in effect — every weight is relative to it">TARE</span>
+    <span class="chip" id="chip-avg" tabindex="0"
+          data-tip="Averaging window is full — 45 raw samples behind the figure">AVG</span>
+    <span class="chip" id="chip-lock" tabindex="0"
+          data-tip="The figure has settled and is latched">HOLD</span>
   </div>
 </div>
 
 <!-- Actions live on parchment, which is the colour change acting as divider. -->
 <div class="tile tile-parchment tile-actions">
   <div class="actions">
-    <button class="btn btn-primary" onclick="tare()">Zero</button>
-    <button class="btn btn-ghost" id="btn-azt" onclick="toggleAzt()">Auto-zero</button>
-    <button class="btn btn-ghost" onclick="openCal()">Calibrate</button>
+    <button class="btn btn-primary has-tip" onclick="tare()"
+            data-tip="Take the tare — every weight is measured from here">Zero</button>
+    <button class="btn btn-ghost has-tip" id="btn-azt" onclick="toggleAzt()"
+            data-tip="On: the zero follows the platform as it drifts">Auto-zero</button>
+    <button class="btn btn-ghost has-tip" onclick="openCal()"
+            data-tip="Two-point calibration against a known reference">Calibrate</button>
   </div>
 </div>
 
@@ -641,6 +709,11 @@ function paint(s) {
   var b = document.getElementById('btn-azt');
   b.classList.toggle('state-on', !!s.azt);
   b.textContent = s.azt ? 'Auto-zero on' : 'Auto-zero off';
+  /* The explanation follows the state, otherwise it describes the opposite of
+     what the button currently does. */
+  b.dataset.tip = s.azt
+      ? 'On: the zero follows the platform as it drifts'
+      : 'Off: the zero stays where the tare left it';
 
   if (s.unit !== lastUnit) {
     lastUnit = s.unit;
@@ -729,6 +802,44 @@ function toggleDiag() {
   var open = b.classList.toggle('open');
   t.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
+
+/* Tooltips on the status chips.
+ *
+ * CSS covers hover and keyboard focus. This covers the third case, which CSS
+ * cannot: a finger. The page was just fitted to a phone with no scrolling, so
+ * the phone is a first-class screen here and a hover-only explanation would be
+ * unreachable on exactly the device that needs it most.
+ *
+ * Pointer events are used rather than a click handler so that a mouse click
+ * does not fight with the CSS :hover - the tap path only runs for touch, where
+ * hover does not exist. Covers the status chips and the three action buttons,
+ * but not every button: the unit buttons say what they do. */
+(function () {
+  var chips = [].slice.call(document.querySelectorAll('.chip, .has-tip'));
+
+  function closeAll(except) {
+    chips.forEach(function (c) { if (c !== except) c.classList.remove('tip-open'); });
+  }
+
+  chips.forEach(function (c) {
+    c.addEventListener('pointerup', function (e) {
+      if (e.pointerType === 'mouse') return;   /* CSS :hover already handles it */
+      var was = c.classList.contains('tip-open');
+      closeAll(c);
+      if (!was) c.classList.add('tip-open');
+    });
+  });
+
+  /* Tap anywhere else closes it. Capture phase, so it runs before the chip's own
+     pointerup and cannot be swallowed by stopPropagation. */
+  document.addEventListener('pointerup', function (e) {
+    if (!e.target.closest || !e.target.closest('.chip, .has-tip')) closeAll(null);
+  }, true);
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeAll(null);
+  });
+})();
 
 var CAL_TEXT = {
   idle:      ['Ready to calibrate.', 0],
