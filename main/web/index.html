@@ -1121,12 +1121,26 @@ function pollCal() {
     .catch(function () {});
 }
 
-/* 1500 ms, not 400 ms. Every poll is a burst of WiFi transmit, and each burst
-   raises the chance of an RF/rail disturbance reaching the HX711. Measured on an
-   empty platform: polling every 100 ms corrupted 10.3% of raw samples, no HTTP
-   traffic at all gave 0%. The readout stays responsive because the filter's own
-   settling time is ~1-3 s, so a faster poll shows the same number more often. */
-setInterval(poll, 1500);
+/* 500 ms, not 1500. This interval was set to 1500 from a measurement showing
+   10.3 % of raw samples corrupted at a 100 ms poll - but that was taken before the
+   interrupt mask around the HX711 read and before the transmit-power fix, which
+   brought the figure at 100 ms down to 0.9 %. Re-measured 2026-10-12 against the
+   current firmware, platform untouched, median raw noise of the device's own
+   average:
+
+       no external poll   15.9 mg
+       poll every 1000   16.0 mg
+       poll every  500   15.9 mg
+       poll every  100   16.5 mg
+
+   So 500 ms costs nothing measurable and the old number no longer applies.
+   Only at 100 ms does the median rise at all, and then by 4 %.
+
+   This matters more than it looks. The poll interval is multiplied by everything
+   downstream that counts polls rather than seconds: HOLD takes LOCK_HOLD polls,
+   so going from 1500 to 500 ms takes the figure from latching after 4.5 s to
+   after 1.5 s. The device only takes 1.15 s to reach a correct value now. */
+setInterval(poll, 500);
 poll();
 </script>
 </body>
