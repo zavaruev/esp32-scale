@@ -45,21 +45,40 @@ static SemaphoreHandle_t lock;
 static scale_snapshot_t snapshot;
 static volatile bool tare_pending = false;
 
-/* Running mean of the raw counts, over AVG_WINDOW_SAMPLES raw samples.
+/* Mean of the raw counts over a window whose LENGTH IS NOT FIXED.
  *
- * 45 samples is 4.0 s at the 11.3 Hz this hardware is stuck at. With a measured
- * raw sigma of 110 mg the standard error of the mean is 110/sqrt(45) = 16 mg,
- * which is what the 18 s browser window was buying at four and a half times the
- * waiting.
+ * Measured on a real step (logs/coins2.log, a 30.6 g reference placed on a
+ * platform already under measurement), time from the step to within 0.05 g:
  *
- * The window fills from empty, so the first reading after a load lands arrives
- * almost immediately and then tightens as samples accumulate - the page shows a
- * figure at once and gets a trustworthy one within a few seconds. */
-#define AVG_WINDOW_SAMPLES 45
+ *     window 45  4.35 s   final sigma 11 mg
+ *     window 18  2.40 s   final sigma 23 mg
+ *     window  9  1.15 s   final sigma 36 mg
+ *
+ * A boxcar mean takes N samples to absorb a step of any size - it has to flush
+ * the old samples out - so N is the response time, and it is not a trade-off
+ * that a cleverer formula can dodge.
+ *
+ * The fixed window of 45 was therefore buying precision the display cannot
+ * show: the step is 0.05 g = 50 mg, and even a window of 9 settles to 36 mg,
+ * already inside one step. Meanwhile it cost 3.2 s on every single reading.
+ *
+ * So the length follows the situation. Short while the weight is moving, where
+ * the only thing that matters is that the figure arrives; grown back to the full
+ * window once it is still, which is where the low noise is wanted. The motion
+ * signal is the filter's own adaptive alpha rather than a second detector: it
+ * already distinguishes the two cases from the difference between the median and
+ * the running average, and reusing it means one fewer threshold to justify.
+ *
+ * The window grows by one sample per reading rather than jumping, so the mean
+ * never steps when the length changes - a sudden change of length would move the
+ * estimate by the difference between the two window noises, which is visible. */
+#define AVG_WINDOW_SAMPLES 45      /* ~4.0 s at 11.3 Hz, the accuracy end */
+#define AVG_WINDOW_MIN 9           /* ~0.8 s, the response end */
+#define AVG_MOTION_ALPHA 0.5       /* midway between ALPHA_STEADY and ALPHA_FAST */
 static int32_t avg_hist[AVG_WINDOW_SAMPLES];
-static int32_t avg_sum;
 static int avg_idx;
-static int avg_len;
+static int avg_filled;             /* valid entries in the ring, up to 45 */
+static int avg_win = AVG_WINDOW_MIN;  /* entries the mean actually covers */
 
 static float sigma_est = 45.0f;   /* EWMA of raw sigma, for diagnostics */
 
@@ -278,22 +297,37 @@ static void measure_task(void *arg)
         if (xSemaphoreTake(lock, portMAX_DELAY) == pdTRUE) {
             /* Running mean of the raw stream, converted against the same anchor
              * the live figure uses so tare and the zero flag behave identically. */
-            if (avg_len < AVG_WINDOW_SAMPLES) {
-                avg_hist[avg_idx] = raw;
-                avg_sum += raw;
-                avg_len++;
-            } else {
-                avg_sum -= avg_hist[avg_idx];
-                avg_hist[avg_idx] = raw;
-                avg_sum += raw;
+            /* Progressive window: short while the weight moves, long once it is still.
+             * See the note on the constants for the measurement this is based on. */
+            if (r.alpha >= AVG_MOTION_ALPHA) {
+                avg_win = AVG_WINDOW_MIN;
+            } else if (avg_win < AVG_WINDOW_SAMPLES) {
+                avg_win++;
             }
+
+            avg_hist[avg_idx] = raw;
             avg_idx = (avg_idx + 1) % AVG_WINDOW_SAMPLES;
-            double avg_counts = (double)avg_sum / avg_len;
+            if (avg_filled < AVG_WINDOW_SAMPLES) {
+                avg_filled++;
+            }
+
+            /* Summed over the requested window rather than kept running. The
+             * window length changes, and a running sum cannot follow a length
+             * change without knowing what left it; re-adding at most 45 numbers
+             * 11 times a second costs nothing and removes that bookkeeping. */
+            int n = avg_win < avg_filled ? avg_win : avg_filled;
+            int64_t sum = 0;
+            for (int k = 1; k <= n; k++) {
+                int j = avg_idx - k;
+                if (j < 0) j += AVG_WINDOW_SAMPLES;
+                sum += avg_hist[j];
+            }
+            double avg_counts = (double)sum / n;
             double avg_rel = avg_counts - filter.azt_anchor;
             snapshot.avg_grams = (float)(avg_rel / filter.cal_factor);
-            snapshot.avg_n = (uint16_t)avg_len;
+            snapshot.avg_n = (uint16_t)n;
             snapshot.avg_sigma_mg = (float)(sigma_est /
-                                            sqrt((double)avg_len) /
+                                            sqrt((double)n) /
                                             filter.cal_factor * 1000.0);
 
             snapshot.grams = r.grams;
