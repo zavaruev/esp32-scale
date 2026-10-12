@@ -58,3 +58,32 @@ CONFIG_LWIP_TCP_WND_DEFAULT=17440
 # have one clear owner.
 CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU1=y
 CONFIG_TCPIP_TASK_AFFINITY_CPU1=y
+
+# Over-the-air update.
+#
+# The partition table is now partitions.csv: two 2 MB application slots instead
+# of one 1 MB "factory" slot, so a new image can be written to the slot that is
+# not running.
+#
+# Rollback is enabled deliberately. An update that arrives over a link which
+# loses packets and then fails to boot leaves a device on a shelf that can only
+# be recovered over USB, and this one is built on a bench where that is a
+# half-day errand. With rollback the bootloader reverts to the previous slot by
+# itself on the next restart. The application calls
+# esp_ota_mark_app_valid_cancel_rollback() once it has proved it runs.
+#
+# Anti-rollback stays OFF. It would refuse an older image permanently, and on a
+# bench scale being able to go back to the last known-good build is worth more
+# than the protection against a deliberate downgrade.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_APP_ROLLBACK_ENABLE=y
+
+# One HTTP server has to carry a firmware image of about 950 KB. The default
+# receive buffer is 512 bytes and the socket receive timeout is 5 s; both are
+# too small for a large upload to survive a link that drops packets, and the
+# symptom would be an upload that fails part way with no useful message.
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
+CONFIG_LWIP_SO_RCVBUF=y

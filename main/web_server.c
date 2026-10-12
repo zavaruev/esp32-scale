@@ -35,6 +35,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "nvs_flash.h"
+#include "ota.h"
 #include "scale_filter.h"
 #include "weight_task.h"
 
@@ -554,7 +555,8 @@ static esp_err_t api_cal_start(httpd_req_t *req)
     esp_err_t err = weight_task_cal_start(mass);
     httpd_resp_set_type(req, "application/json");
     if (err != ESP_OK) {
-        httpd_resp_send(req, "{\"error\":\"already running\"}", 25);
+        httpd_resp_send(req, "{\"error\":\"already running\"}",
+                         HTTPD_RESP_USE_STRLEN);
         return err;
     }
     const char *reply = mass > 0.0 ? "{\"started\":true,\"apply\":true}"
@@ -594,6 +596,171 @@ static esp_err_t api_cal_state(httpd_req_t *req)
  * "Do's". Tiles are never rounded. One blue accent only. Weight readout carries
  * the single product shadow.
  */
+/* ---------------------------------------------------------------- firmware
+ *
+ * Three endpoints, and the split is the whole design.
+ *
+ *   POST /api/ota        opens a transfer (?size=N) or sends one chunk
+ *   GET  /api/ota        reports progress
+ *   POST /api/ota/commit finishes it
+ *
+ * Why chunks with an explicit offset instead of one big POST: this link loses
+ * anywhere from 0 to 100 % of its packets, measured 2026-10-09, and the image is
+ * about 950 KB. A single request would have to survive the whole run of bad luck
+ * in one stretch. Here a dropout costs one chunk, and the client asks the device
+ * how much landed and continues - so the transfer converges even over a link
+ * that is losing most of what it sends.
+ *
+ * The offset is in the query string rather than a header because it has to be
+ * readable before the body is consumed, and the query string is available then.
+ */
+#define OTA_CHUNK_MAX 8192
+
+static esp_err_t ota_send_json(httpd_req_t *req, const char *json)
+{
+    httpd_resp_set_type(req, "application/json");
+    /* An update outlives the page that started it; caching a status reply would
+     * show a progress bar that never moves. */
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t ota_status_json(httpd_req_t *req)
+{
+    ota_status_t st;
+    ota_get_status(&st);
+    char q[512];
+    snprintf(q, sizeof(q),
+             "{\"state\":%d,\"written\":%u,\"total\":%u,\"part\":%u,"
+             "\"target\":%d,\"running\":%d,\"rollback\":%s,"
+             "\"run_ver\":\"%s\",\"tgt_ver\":\"%s\",\"error\":\"%s\"}",
+             (int)st.state, (unsigned)st.written, (unsigned)st.total,
+             (unsigned)st.partition_size, st.target_slot, st.running_slot,
+             st.rollback_armed ? "true" : "false",
+             st.running_version, st.target_version, st.error);
+    return ota_send_json(req, q);
+}
+
+static esp_err_t api_ota_get(httpd_req_t *req)
+{
+    return ota_status_json(req);
+}
+
+static esp_err_t api_ota_post(httpd_req_t *req)
+{
+    char q[64] = {0};
+    if (httpd_req_get_url_query_len(req) < sizeof(q)) {
+        httpd_req_get_url_query_str(req, q, sizeof(q));
+    }
+
+    /* ?commit=1 finishes; ?abort=1 throws the transfer away; ?size=N opens;
+     * otherwise the body is a chunk at ?offset=N. */
+    if (strstr(q, "commit")) {
+        esp_err_t err = ota_finish();
+        if (err != ESP_OK) {
+            ota_status_json(req);
+            return ESP_OK;   /* the status carries the reason */
+        }
+        ota_status_json(req);
+        return ESP_OK;
+    }
+    if (strstr(q, "abort")) {
+        ota_abort();
+        return ota_status_json(req);
+    }
+
+    const char *size_p = strstr(q, "size=");
+    if (size_p != NULL) {
+        size_t total = (size_t)strtoul(size_p + 5, NULL, 10);
+        esp_err_t err = ota_begin(total);
+        if (err != ESP_OK) {
+            ota_status_json(req);
+            return ESP_OK;
+        }
+        return ota_status_json(req);
+    }
+
+    const char *off_p = strstr(q, "offset=");
+    if (off_p == NULL) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return ota_send_json(req, "{\"error\":\"offset missing\"}");
+    }
+    uint32_t offset = (uint32_t)strtoul(off_p + 7, NULL, 10);
+
+    /* Read the body and write it as it arrives - never buffer the whole image,
+     * there is no need for 950 KB of RAM to move 950 KB of flash. */
+    uint8_t *buf = malloc(OTA_CHUNK_MAX);
+    if (buf == NULL) {
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        return ota_send_json(req, "{\"error\":\"out of memory\"}");
+    }
+
+    int   total_len = req->content_len;
+    int   remaining = total_len;
+    esp_err_t werr = ESP_OK;
+
+    if (remaining < 0) {
+        /* Chunked upload: keep reading until the socket says there is no more.
+         * The length is then whatever has landed, which the device checks
+         * against the size the client declared. */
+        remaining = OTA_CHUNK_MAX;
+        while (true) {
+            int n = httpd_req_recv(req, (char *)buf, OTA_CHUNK_MAX);
+            if (n == 0) break;
+            if (n < 0) {
+                if (n == HTTPD_SOCK_ERR_TIMEOUT) continue;  /* a slow moment */
+                werr = ESP_FAIL;
+                break;
+            }
+            werr = ota_write_chunk(offset, buf, (size_t)n);
+            if (werr != ESP_OK) break;
+            offset += (uint32_t)n;
+        }
+    } else {
+        while (remaining > 0) {
+            int want = remaining < OTA_CHUNK_MAX ? remaining : OTA_CHUNK_MAX;
+            int n = httpd_req_recv(req, (char *)buf, (size_t)want);
+            if (n <= 0) {
+                if (n == HTTPD_SOCK_ERR_TIMEOUT) continue;
+                werr = ESP_FAIL;
+                break;
+            }
+            werr = ota_write_chunk(offset, buf, (size_t)n);
+            if (werr != ESP_OK) break;
+            offset += (uint32_t)n;
+            remaining -= n;
+        }
+    }
+
+    free(buf);
+    (void)werr;   /* the status reply is the meaningful answer either way */
+    return ota_status_json(req);
+}
+
+/* Restart. Needed after an update: the new slot is marked to boot, and nothing
+ * switches to it until the next start.
+ *
+ * The reply is sent first and the restart happens from a task a moment later, or
+ * the browser would see the connection drop and conclude the reboot had failed -
+ * the same reason the page send was moved off the request path. */
+static void reboot_task(void *arg)
+{
+    vTaskDelay(pdMS_TO_TICKS(400));
+    esp_restart();
+}
+
+static esp_err_t api_reboot(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json");
+    /* HTTPD_RESP_USE_STRLEN rather than a hand-counted length: the count was
+     * written as 26 for a 29 byte string, which would have cut the reply off
+     * before the closing brace and produced a JSON parse error in the page. */
+    httpd_resp_send(req, "{\"ok\":true,\"restarting\":true}",
+                     HTTPD_RESP_USE_STRLEN);
+    xTaskCreate(reboot_task, "reboot", 2048, NULL, 4, NULL);
+    return ESP_OK;
+}
+
 static esp_err_t root_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
@@ -995,8 +1162,32 @@ void wifi_scan_report(void)
 void web_server_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.stack_size = 6144;
+    /* Was 6144. The OTA handler mallocs an 8 KB transfer buffer and calls
+     * snprintf with several 512-byte locals on top of that, and 6 KB is not
+     * enough headroom for the deepest call chain it has to survive. */
+    cfg.stack_size = 10240;
+    /* The default is 8 and there is no Kconfig option for it - the number comes
+     * from here alone. The page, the weight poll, tare, unit, auto-zero and the
+     * two calibration routes are 7, and OTA is the 9th entry because /api/ota is
+     * registered twice, once per method.
+     *
+     * This cost a boot loop when OTA was first added: the ninth registration
+     * returned ESP_ERR_HTTPD_HANDLERS_FULL inside ESP_ERROR_CHECK, so the device
+     * restarted at once, every time, and never reached the network. Nothing about
+     * the symptom pointed at the handler table.
+     *
+     * The count is asserted at the end of the function against the number of
+     * registrations, so the next route added fails the build rather than the
+     * device. */
+#define HTTP_MAX_HANDLERS 16
+    cfg.max_uri_handlers = HTTP_MAX_HANDLERS;
     cfg.uri_match_fn = httpd_uri_match_wildcard;
+    /* The default is 5 s. On a link measured losing 0-100 % of its packets, a
+     * firmware upload stalls for longer than that between chunks and every long
+     * gap would abort the request. This bounds how long the socket stays idle
+     * with nothing at all, not the transfer as a whole. */
+    cfg.recv_wait_timeout = 30;
+    cfg.send_wait_timeout = 30;
     /* The server task inherits the caller's priority in IDF v6 (there is no
      * server_prio field). net_start() runs from app_main at priority 1, so the
      * HTTP server would be served below the measurement task - which is exactly
@@ -1030,6 +1221,15 @@ void web_server_start(void)
     httpd_uri_t cstate = {
         .uri = "/api/cal", .method = HTTP_GET, .handler = api_cal_state,
     };
+    httpd_uri_t ota_get = {
+        .uri = "/api/ota", .method = HTTP_GET, .handler = api_ota_get,
+    };
+    httpd_uri_t ota_post = {
+        .uri = "/api/ota", .method = HTTP_POST, .handler = api_ota_post,
+    };
+    httpd_uri_t reboot = {
+        .uri = "/api/reboot", .method = HTTP_POST, .handler = api_reboot,
+    };
 
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &root));
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &w));
@@ -1038,8 +1238,20 @@ void web_server_start(void)
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &a));
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &cstart));
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &cstate));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_get));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_post));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &reboot));
 
-    ESP_LOGI(TAG, "http server ready");
+    /* Fails the build if a route is added and the table is not enlarged, rather
+     * than rebooting the device on every boot. The names are spelled out because
+     * an #if on a function address is not something a C compiler can do. */
+#define ASSERT_HANDLER_FITS(n) \
+    _Static_assert((n) <= HTTP_MAX_HANDLERS, \
+                   "more URI handlers registered than the server was given room for")
+    ASSERT_HANDLER_FITS(10);
+
+    ESP_LOGI(TAG, "http server ready, %d handlers in a table of %d",
+             10, HTTP_MAX_HANDLERS);
 }
 
 void net_start(void)

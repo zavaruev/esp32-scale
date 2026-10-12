@@ -309,6 +309,30 @@ body{
 .card-toggle[aria-expanded="true"] .chev{transform:rotate(45deg)}
 .diag-body{display:none}
 .diag-body.open{display:block;margin-top:14px}
+
+/* Firmware section. The progress bar is a plain div rather than <progress>:
+   it needs to match the tile styling, and the element's default rendering
+   cannot be themed across the two palettes. */
+.fw-pick{
+  display:block;text-align:center;margin-top:12px;
+  padding:11px 16px;border-radius:9999px;cursor:pointer;
+  border:1px solid var(--primary);color:var(--primary);
+  font-size:15px;letter-spacing:-.2px;
+}
+.fw-pick:active{transform:scale(.98)}
+.fw-pick:focus-within{outline:2px solid var(--primary-focus);outline-offset:2px}
+.fw-progress{margin-top:12px}
+.fw-bar{height:6px;border-radius:3px;background:var(--hairline);overflow:hidden}
+.fw-bar i{display:block;height:100%;width:0;background:var(--primary);
+          border-radius:3px;transition:width .2s}
+.fw-status{margin-top:7px;font-size:12px;color:var(--muted48);
+           font-variant-numeric:tabular-nums}
+.fw-reboot{width:100%;margin-top:12px;font-size:15px;padding:11px 16px}
+.fw-note{margin-top:10px;font-size:12px;line-height:1.4;color:var(--muted48)}
+/* No red token exists in this palette and DESIGN.md does not define one, so an
+   error is set in ink at full weight rather than in a colour that would be the
+   only red in the product. It reads as emphasis, not as an alarm. */
+.fw-note.bad{color:var(--ink);font-weight:500}
 .kv{
   font-family:system-ui,-apple-system,sans-serif;font-weight:400;
   font-size:14px;line-height:1.43;letter-spacing:-.224px;
@@ -513,6 +537,41 @@ footer{
       <div class="kv"><span>cal_factor</span><b id="d-cal">—</b></div>
       <div class="kv"><span>tare_offset</span><b id="d-tare">—</b></div>
       <div class="kv"><span>Uptime</span><b id="d-up">—</b></div>
+    </div>
+  </div>
+</div>
+
+<div class="tile tile-flush tile-foot">
+  <div class="card">
+    <!-- Same collapsed-by-default treatment as Diagnostics, and for the same
+         reason: nobody flashes firmware while they are weighing, and an open
+         picker would push the rest of the page off a phone screen. -->
+    <button class="card-toggle" id="fw-toggle" onclick="toggleFw()"
+            aria-expanded="false" aria-controls="fw-body">
+      <span class="label" style="margin:0">Firmware</span>
+      <span class="chev" aria-hidden="true"></span>
+    </button>
+    <div class="diag-body" id="fw-body">
+      <div class="kv"><span>Running</span><b id="fw-ver">—</b></div>
+      <div class="kv"><span>Slot</span><b id="fw-slot">—</b></div>
+      <div class="kv" id="fw-pending-row" style="display:none">
+        <span>Waiting</span><b id="fw-pending">—</b></div>
+
+      <!-- Choosing the file is the whole upload flow. The page reads it in
+           slices and posts them one at a time, because a single 950 KB request
+           cannot survive this link - see ota_push.py for the same loop in the
+           command line version. -->
+      <label class="fw-pick" for="fw-file">Choose image</label>
+      <input type="file" id="fw-file" accept=".bin" hidden>
+
+      <div class="fw-progress" id="fw-prog-wrap" style="display:none">
+        <div class="fw-bar"><i id="fw-bar"></i></div>
+        <div class="fw-status" id="fw-status">—</div>
+      </div>
+
+      <button class="btn btn-primary fw-reboot" id="fw-reboot"
+              onclick="fwReboot()" style="display:none">Restart now</button>
+      <div class="fw-note" id="fw-note"></div>
     </div>
   </div>
 </div>
@@ -813,6 +872,159 @@ function toggleDiag() {
   var open = b.classList.toggle('open');
   t.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
+
+/* --------------------------------------------------------------- firmware */
+
+function toggleFw() {
+  var b = document.getElementById('fw-body');
+  var t = document.getElementById('fw-toggle');
+  var open = b.classList.toggle('open');
+  t.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (open) fwStatus();
+}
+
+/* Reads the device's own progress. This is the function that makes a resume
+   possible: after any failure the page asks how much landed rather than
+   assuming, so a chunk that went missing costs one chunk and not the upload. */
+function fwStatus() {
+  return fetch('/api/ota', {cache: 'no-store'})
+    .then(function (r) { return r.json(); })
+    .then(function (s) {
+      document.getElementById('fw-ver').textContent =
+        s.run_ver || 'unknown';
+      document.getElementById('fw-slot').textContent =
+        (s.running >= 0 ? 'slot ' + (s.running + 1) : '—') +
+        ' of 2' + (s.target >= 0 ? '' : ' · OTA unavailable');
+
+      var pending = document.getElementById('fw-pending-row');
+      if (s.tgt_ver && s.tgt_ver !== s.run_ver) {
+        pending.style.display = '';
+        document.getElementById('fw-pending').textContent = s.tgt_ver;
+        document.getElementById('fw-reboot').style.display = '';
+      } else {
+        pending.style.display = 'none';
+        document.getElementById('fw-reboot').style.display = 'none';
+      }
+
+      if (s.target < 0) {
+        fwNote('This device still has the old one-slot partition table. ' +
+               'Flash partitions.csv once over USB to enable updates.', true);
+      } else if (s.error) {
+        fwNote(s.error, true);
+      } else if (s.state === 3) {
+        fwNote('Verified. Restart to run it. If it does not start, the device ' +
+               'returns to the previous version on its own.');
+      } else {
+        fwNote('');
+      }
+      return s;
+    })
+    .catch(function () { return null; });
+}
+
+function fwNote(text, bad) {
+  var n = document.getElementById('fw-note');
+  n.textContent = text || '';
+  n.classList.toggle('bad', !!bad);
+}
+
+function fwProgress(written, total, text) {
+  document.getElementById('fw-prog-wrap').style.display = '';
+  var pct = total ? Math.round(100 * written / total) : 0;
+  document.getElementById('fw-bar').style.width = pct + '%';
+  document.getElementById('fw-status').textContent =
+    pct + '% · ' + (written / 1024).toFixed(0) + ' of ' +
+    (total / 1024).toFixed(0) + ' KB' + (text ? ' · ' + text : '');
+}
+
+/* One 950 KB request cannot survive this link - it loses 0-100 % of its packets,
+   measured. So the file is posted in slices, each one asking for a position and
+   carrying it, and a failed slice is retried from wherever the device says it
+   got to. The same loop exists in tools/ota_push.py. */
+var FW_CHUNK = 4096;
+
+function fwUpload(file) {
+  var total = file.size;
+  fwProgress(0, total, 'erasing the spare slot');
+  fwNote('');
+
+  fetch('/api/ota?size=' + total, {method: 'POST', body: ''})
+    .then(function (r) { return r.json(); })
+    .then(function (s) {
+      if (s.state !== 1) throw new Error(s.error || 'the device refused');
+      return sendFrom(s.written || 0);
+    })
+    .then(commitFw)
+    .catch(function (e) {
+      fwNote(e.message || String(e), true);
+      fwStatus();
+    });
+}
+
+function sendFrom(written) {
+  var file = document.getElementById('fw-file').files[0];
+  var total = file.size;
+  var stalls = 0;
+
+  function step() {
+    if (written >= total) return Promise.resolve();
+
+    var end = Math.min(written + FW_CHUNK, total);
+    return fetch('/api/ota?offset=' + written, {method: 'POST', body: file.slice(written, end)})
+      .then(function (r) { return r.json(); })
+      .then(function (s) {
+        if (s.error) throw new Error(s.error);
+        var at = Math.max(written, s.written);
+        if (at <= written) {
+          /* No forward progress. Ask again rather than pushing on: a reply that
+             did not advance means this chunk has not landed, and re-sending it
+             is harmless. */
+          if (++stalls > 40) throw new Error('the link is not getting through');
+        } else {
+          stalls = 0;
+          written = at;
+          fwProgress(written, total, stalls ? 'retrying' : '');
+        }
+        return step();
+      })
+      .catch(function (e) {
+        if (/not getting through/.test(e.message)) throw e;
+        /* The request may have failed before or after the device took the bytes.
+           Never assume either way - go back to /api/ota, which is authoritative
+           about what is in the slot. */
+        return new Promise(function (res) { setTimeout(res, 1200); })
+          .then(fwStatus)
+          .then(function (s) {
+            if (!s) throw new Error('the device stopped answering');
+            written = Math.max(written, s.written);
+            if (++stalls > 40) throw new Error('the link is not getting through');
+            return step();
+          });
+      });
+  }
+  return step();
+}
+
+function commitFw() {
+  fwProgress(1, 1, 'verifying');
+  return fetch('/api/ota?commit=1', {method: 'POST', body: ''})
+    .then(function (r) { return r.json(); })
+    .then(function (s) {
+      if (s.state !== 3) throw new Error(s.error || 'verification failed');
+      document.getElementById('fw-prog-wrap').style.display = 'none';
+      return fwStatus();
+    });
+}
+
+function fwReboot() {
+  fwNote('Restarting…');
+  fetch('/api/reboot', {method: 'POST'}).catch(function () {});
+}
+
+document.getElementById('fw-file').addEventListener('change', function (e) {
+  var f = e.target.files[0];
+  if (f) fwUpload(f);
+});
 
 /* Tooltips on the status chips.
  *

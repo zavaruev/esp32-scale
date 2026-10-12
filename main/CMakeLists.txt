@@ -33,6 +33,7 @@ idf_component_register(
          "scale_filter.c"
          "weight_task.c"
          "web_server.c"
+         "ota.c"
          "hx711.c"
          "${WEB_HEADER}"
     INCLUDE_DIRS "."
@@ -43,4 +44,7 @@ idf_component_register(
              esp_netif
              esp_event
              esp_http_server
-             esp_http_client)
+             esp_http_client
+             app_update
+             esp_partition
+             bootloader_support)

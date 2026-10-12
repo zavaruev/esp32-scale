@@ -27,6 +27,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "hx711.h"
+#include "ota.h"
 #include "scale_filter.h"
 #include "web_server.h"
 #include "weight_task.h"
@@ -240,6 +241,11 @@ void app_main(void)
     vTaskDelay(pdMS_TO_TICKS(1500));
 
     ESP_ERROR_CHECK(weight_task_start());
+    /* Before the server comes up, so the page's first status reply already
+     * knows which slot is running. ota_init() also confirms the running image
+     * if the bootloader started it as PENDING_VERIFY, which is what lets an
+     * update stick instead of reverting on the next restart. */
+    ota_init();
     ESP_ERROR_CHECK(net_start());
     wifi_start_ap_fallback();
 

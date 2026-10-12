@@ -1,0 +1,39 @@
+# Two application slots, so the firmware can be replaced over the air.
+#
+# The first layout was partitions_singleapp.csv: a single "factory" slot of 1 MB.
+# One slot cannot be updated in place - the running code is in it - so it was
+# flashed over USB every time. With two slots the free one is written and the
+# bootloader switches on the next restart.
+#
+# Offsets and sizes
+#   nvs      unchanged at 0x9000, 24K. This is not cosmetic: the calibration
+#            lives here (tare_offset, cal_factor), it took two weighed references
+#            to establish, and moving the partition would silently reset the scale
+#            to factory defaults on the first boot after this table is flashed.
+#   phy_init unchanged at 0xf000, 4K, for the same reason - the WiFi calibration
+#            lives there, and a corrupted one is what stopped this device from
+#            joining the network at all before an erase_flash was run.
+#   otadata  0x10000, 8K. Holds the OTA bookkeeping: which slot the bootloader
+#            picks and the state of a rollback. New. It goes after phy_init
+#            rather than in the gap before it, because the gap is 0x1000 and
+#            this one wants 0x2000 - taking it there would mean moving phy_init.
+#   ota_0    0x20000, 2M. The application. Was 1M and the application is already
+#            952 KB in it, 7 % free - too little to keep building in, and an OTA
+#            that arrives a few commits later would not fit at all.
+#   ota_1    0x220000, 2M. The second slot, where the update is written.
+#
+# 2 MB per slot is twice what the application needs today and leaves room for the
+# page to keep growing. The flash is 16 MB, so both slots plus everything else
+# come to about 4.5 MB and there is no pressure on the layout.
+#
+# Offsets must be aligned to 0x10000 for app partitions; gen_esp32part.py
+# refuses to build the table otherwise.
+#
+# Note on flashing this once: the first image has to arrive over USB, because the
+# device still has the old one-slot table and no slot to receive it. After that
+# idf.py flash writes into the running slot automatically.
+nvs,      data, nvs,     0x9000,   0x6000,
+phy_init, data, phy,     0xf000,   0x1000,
+otadata,  data, ota,     0x10000,  0x2000,
+ota_0,    app,  ota_0,   0x20000,  0x200000,
+ota_1,    app,  ota_1,   0x220000, 0x200000,
