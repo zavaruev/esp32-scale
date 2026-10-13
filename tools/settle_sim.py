@@ -30,9 +30,11 @@ AZT_RATE = 30.0
 AZT_HOLD_US = 2_000_000
 DEADBAND = 40.0
 MEDIAN_N = 5
-AVG_WINDOW = 45          # device-side running mean
+AVG_WINDOW = 45          # device-side running mean, the accuracy end
+AVG_MIN = 9              # device-side window while travelling
+STEP_COUNTS = 100.0      # mean movement above which the window stays short
 
-POLL_S = 1.5             # browser poll interval
+POLL_S = 0.5             # browser poll interval
 AVG_N = 2                # browser polls averaged
 LOCK_TOL = 0.03
 LOCK_RELEASE = 0.5
@@ -77,15 +79,17 @@ def load(path):
     return c, t, idx
 
 
-def chain(counts, t_s, window=AVG_WINDOW, browser=True, verbose=False):
-    """Runs the real chain and returns the sequence of displayed values."""
+def chain(counts, t_s, window=AVG_WINDOW, step_thresh=None, progressive=True):
+    """Runs the real chain and returns the sequence of displayed values.
+    progressive=False reproduces the original fixed window of 45."""
     ema = None
     hist = []
     anchor = None
-    dev_hist = []
+    dev = []
     out = []
-    step_at = None
+    win = AVG_MIN if progressive else window
     prev = None
+    have = False
     for c, t in zip(counts, t_s):
         hist.append(c)
         if len(hist) > MEDIAN_N:
@@ -111,18 +115,24 @@ def chain(counts, t_s, window=AVG_WINDOW, browser=True, verbose=False):
             anchor = ema
         diff = ema - anchor
         if abs(diff) <= AZT_WINDOW:
-            # Small enough to be nothing: park the zero on the reading.
-            # (The 2 s hold is not modelled - it does not affect a step this big.)
             anchor = ema
 
         grams = (ema - anchor) / CAL
 
-        dev_hist.append(c)
-        if len(dev_hist) > window:
-            dev_hist.pop(0)
-        mean_g = (st.mean(dev_hist) - anchor) / CAL
-        out.append((t, mean_g if abs(grams) > DEADBAND / CAL or mean_g else 0.0))
-        prev = c
+        dev.append(c)
+        n = min(win, len(dev))
+        mean_c = st.mean(dev[-n:]) if dev else c
+        # The rule as implemented: hold the window short while THE MEAN travels.
+        thr = step_thresh if step_thresh else STEP_COUNTS
+        if progressive:
+            if have and abs(mean_c - prev) > thr:
+                win = AVG_MIN
+            elif win < window:
+                win += 1
+            prev = mean_c
+            have = True
+
+        out.append((t, (mean_c - anchor) / CAL))
     return out
 
 
@@ -150,10 +160,9 @@ def report(path):
     t = [x - t_s[lo] for x in t_s[lo:hi]]
     step_in = t[idx - lo]
 
-    for window, label in ((AVG_WINDOW, "текущее N=45"),
-                          (18, "N=18"),
-                          (9, "N=9")):
-        seq = chain(c, t, window=window)
+    for window, label, prog in ((AVG_WINDOW, "фикс. 45 (было)", False),
+                               (AVG_WINDOW, "прогрессивное (новое)", True)):
+        seq = chain(c, t, window=window, progressive=prog)
         settle = None
         tol = 0.05
         for i, (tt, g) in enumerate(seq):
@@ -166,10 +175,11 @@ def report(path):
                     break
         tail = [g for tt, g in seq if tt > (t[-1] - 8.0)]
         sig = st.pstdev(tail) * 1000 if len(tail) > 5 else float('nan')
-        print("  окно %-18s отклик до ±0.05 г: %5.2f с   итоговый шум %5.0f мг"
+        print("  окно %-22s отклик до ±0.05 г: %5.2f с   итоговый шум %5.0f мг"
               % (label, settle if settle else -1, sig))
-    print("  сверху сверху: браузер опрашивает раз в %.1f с и ждёт ещё %d опроса"
-          " до фиксации (HOLD)" % (POLL_S, LOCK_HOLD))
+    print("  сверху: страница опрашивает раз в %.0f мс и ждёт ещё %d опроса"
+          " до фиксации (HOLD), то есть %.1f с"
+          % (POLL_S * 1000, LOCK_HOLD, POLL_S * LOCK_HOLD))
 
 
 if __name__ == "__main__":

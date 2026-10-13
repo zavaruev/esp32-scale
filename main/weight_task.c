@@ -74,11 +74,16 @@ static volatile bool tare_pending = false;
  * estimate by the difference between the two window noises, which is visible. */
 #define AVG_WINDOW_SAMPLES 45      /* ~4.0 s at 11.3 Hz, the accuracy end */
 #define AVG_WINDOW_MIN 9           /* ~0.8 s, the response end */
-#define AVG_MOTION_ALPHA 0.5       /* midway between ALPHA_STEADY and ALPHA_FAST */
+/* How far the mean may move between two samples before the window is held
+ * short. At rest with the short window that movement is about 21 counts, so
+ * this is five times it; during the settling of a 73 g step it is 385. */
+#define AVG_STEP_COUNTS 100.0
 static int32_t avg_hist[AVG_WINDOW_SAMPLES];
 static int avg_idx;
 static int avg_filled;             /* valid entries in the ring, up to 45 */
 static int avg_win = AVG_WINDOW_MIN;  /* entries the mean actually covers */
+static double avg_prev_counts;     /* the mean at the previous sample */
+static bool avg_have_prev;
 
 static float sigma_est = 45.0f;   /* EWMA of raw sigma, for diagnostics */
 
@@ -297,14 +302,24 @@ static void measure_task(void *arg)
         if (xSemaphoreTake(lock, portMAX_DELAY) == pdTRUE) {
             /* Running mean of the raw stream, converted against the same anchor
              * the live figure uses so tare and the zero flag behave identically. */
-            /* Progressive window: short while the weight moves, long once it is still.
-             * See the note on the constants for the measurement this is based on. */
-            if (r.alpha >= AVG_MOTION_ALPHA) {
-                avg_win = AVG_WINDOW_MIN;
-            } else if (avg_win < AVG_WINDOW_SAMPLES) {
-                avg_win++;
-            }
-
+            /* Progressive window: short while the reading is still converging, long once it
+             * has arrived. See the note on the constants for the measurement.
+             *
+             * The test is whether THE MEAN has stopped moving, not whether the EMA
+             * has. Keying off the EMA's alpha was wrong and measurably so: after a
+             * step the alpha drops within a couple of samples while the mean is
+             * still 30 g short, so the window began growing straight away and then
+             * held the pre-step samples in for longer than it needed to. Measured
+             * on the device: a 73 g placement climbed from 36 g to 73 g over 3.6 s
+             * with the window growing 9, 11, 14, 19, 24, 31, 40, 45 through it.
+             *
+             * Comparing the mean against its own previous value is what "the
+             * reading has settled" actually means here, and it costs one double.
+             *
+             * The threshold is set from the noise, not by taste. At rest with a
+             * window of 9 the mean moves about 21 counts between samples
+             * (sigma_raw * sqrt(2) / sqrt(9)); 100 counts is roughly five of those,
+             * while the rise during a settling of 73 g is 385 counts per sample. */
             avg_hist[avg_idx] = raw;
             avg_idx = (avg_idx + 1) % AVG_WINDOW_SAMPLES;
             if (avg_filled < AVG_WINDOW_SAMPLES) {
@@ -323,6 +338,15 @@ static void measure_task(void *arg)
                 sum += avg_hist[j];
             }
             double avg_counts = (double)sum / n;
+
+            if (avg_have_prev && fabs(avg_counts - avg_prev_counts) > AVG_STEP_COUNTS) {
+                avg_win = AVG_WINDOW_MIN;          /* still travelling */
+            } else if (avg_win < AVG_WINDOW_SAMPLES) {
+                avg_win++;                          /* arrived; earn the accuracy */
+            }
+            avg_prev_counts = avg_counts;
+            avg_have_prev = true;
+
             double avg_rel = avg_counts - filter.azt_anchor;
             snapshot.avg_grams = (float)(avg_rel / filter.cal_factor);
             snapshot.avg_n = (uint16_t)n;
