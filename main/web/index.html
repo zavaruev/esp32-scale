@@ -72,6 +72,19 @@
   --pill:9999px; --sm:8px; --md:11px; --lg:18px;
   --product-shadow:0 3px 30px rgba(0,0,0,.22);
 
+  /* Green for the reading once it has settled.
+   *
+   * DESIGN.md has no green token - it names one only as the colour of a logo -
+   * so this is Apple's system green from the same system the rest of the tokens
+   * come from, rather than a colour invented for the page.
+   *
+   * One value serves both themes because the hero tile stays near-black in both
+   * (--tile #272729 and #1c1c1e), and the figure never leaves it. Contrast
+   * measured: 6.72:1 on the light theme tile, 7.66:1 on the dark one, against
+   * 3:1 required for text this size. The darker system green was rejected at
+   * 3.39:1, which is too close to the floor to rely on. */
+  --settled:#34c759;
+
   /* Chip colours live here because they need to change with the theme, and a
      bare opacity on the element dims the border as well as the text. */
   --chip-off:#9a9aa0;
@@ -188,6 +201,21 @@ body{
   font-variant-numeric:tabular-nums;
   font-feature-settings:"tnum" 1;
 }
+
+/* The reading turns green once it has settled.
+ *
+ * Asymmetric transition, and that is the whole trick: 120 ms to go green, 600 ms
+ * to come back. One duration makes the colour pulse with every noise excursion -
+ * the resting figure wanders by about 26 mg, half a display step, so a
+ * hair-trigger colour would strobe several times a second. Snapping on quickly
+ * and releasing slowly means a value that briefly dips below the threshold does
+ * not visibly change at all.
+ *
+ * The colour is a second channel, never the only one: the STABLE and HOLD chips
+ * already carry the same state for anyone who cannot use it. */
+#weight{transition:color .6s ease}
+#weight.settled{color:var(--settled);transition:color .12s ease}
+
 .hero-unit{
   font-family:system-ui,-apple-system,sans-serif;
   font-weight:600;
@@ -764,6 +792,24 @@ function paint(s) {
      backed by a full 45 samples rather than a partly warmed-up mean. */
   setChip('chip-avg', s.avg_n >= 45);
   setChip('chip-lock', locked);
+
+  /* Green once the reading has settled.
+   *
+   * Keyed on `locked`, not on a threshold invented here. HOLD already answers
+   * exactly this question - three consecutive readings agreeing inside 0.03 g -
+   * and it was tuned against the measured 26 mg wander of the resting figure, so
+   * it carries the hysteresis a colour needs. A new comparison would be a new
+   * constant to justify and a second place for the two to disagree.
+   *
+   * The zero case is added deliberately. holdOrShow() is bypassed when the device
+   * reports zero, so an empty platform never locks and would sit white forever -
+   * which reads as "not settled yet" on a platform that is in fact perfectly
+   * still. There the device's own stability flag is the answer.
+   *
+   * Average window full is required as well: it is the difference between a
+   * figure backed by 45 samples and one backed by the 9 used while travelling. */
+  var settled = (locked || (s.zero && s.stable)) && s.avg_n >= 45;
+  document.getElementById('weight').classList.toggle('settled', settled);
 
   document.getElementById('d-counts').textContent = s.counts;
   document.getElementById('d-sigma').textContent = s.sigma_mg.toFixed(0) + ' mg';
