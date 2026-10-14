@@ -62,12 +62,12 @@ static volatile bool tare_pending = false;
  * show: the step is 0.05 g = 50 mg, and even a window of 9 settles to 36 mg,
  * already inside one step. Meanwhile it cost 3.2 s on every single reading.
  *
- * So the length follows the situation. Short while the weight is moving, where
- * the only thing that matters is that the figure arrives; grown back to the full
- * window once it is still, which is where the low noise is wanted. The motion
- * signal is the filter's own adaptive alpha rather than a second detector: it
- * already distinguishes the two cases from the difference between the median and
- * the running average, and reusing it means one fewer threshold to justify.
+ * So the length follows the situation. Short while the reading is still
+ * converging, where the only thing that matters is that the figure arrives;
+ * grown back to the full window once it has arrived, which is where the low
+ * noise is wanted. The test is whether the mean itself has stopped moving -
+ * see the note at the point of use for why keying off the EMA's alpha was
+ * wrong and measurably slower.
  *
  * The window grows by one sample per reading rather than jumping, so the mean
  * never steps when the length changes - a sudden change of length would move the
