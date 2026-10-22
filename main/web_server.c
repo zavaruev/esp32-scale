@@ -42,6 +42,11 @@
 
 static const char *TAG = "web";
 
+/* The server handle, kept so that web_server_start() can be called more than
+ * once (for example after a driver restart) without re-registering the same
+ * URI handlers and dying with ESP_ERR_HTTPD_HANDLER_EXISTS. */
+static httpd_handle_t http_server;
+
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_DRIVER_READY_BIT BIT1
 static EventGroupHandle_t wifi_events;
@@ -665,6 +670,12 @@ static esp_err_t api_cal_state(httpd_req_t *req)
  * readable before the body is consumed, and the query string is available then.
  */
 #define OTA_CHUNK_MAX 8192
+/* Bound on consecutive receive timeouts while one upload chunk is being read.
+ * The server task runs every handler in sequence, so a handler that never
+ * returns makes every route unreachable - not just OTA. Three consecutive
+ * 30 s timeouts is 90 s of a stalled client, long enough to treat the chunk
+ * as lost and let the client retry from the last confirmed offset. */
+#define OTA_RECV_TIMEOUT_MAX 3
 
 static esp_err_t ota_send_json(httpd_req_t *req, const char *json)
 {
@@ -754,27 +765,43 @@ static esp_err_t api_ota_post(httpd_req_t *req)
          * The length is then whatever has landed, which the device checks
          * against the size the client declared. */
         remaining = OTA_CHUNK_MAX;
+        int timeouts = 0;
         while (true) {
             int n = httpd_req_recv(req, (char *)buf, OTA_CHUNK_MAX);
             if (n == 0) break;
             if (n < 0) {
-                if (n == HTTPD_SOCK_ERR_TIMEOUT) continue;  /* a slow moment */
+                if (n == HTTPD_SOCK_ERR_TIMEOUT) {
+                    if (++timeouts >= OTA_RECV_TIMEOUT_MAX) {
+                        werr = ESP_ERR_TIMEOUT;
+                        break;
+                    }
+                    continue;  /* a slow moment */
+                }
                 werr = ESP_FAIL;
                 break;
             }
+            timeouts = 0;
             werr = ota_write_chunk(offset, buf, (size_t)n);
             if (werr != ESP_OK) break;
             offset += (uint32_t)n;
         }
     } else {
+        int timeouts = 0;
         while (remaining > 0) {
             int want = remaining < OTA_CHUNK_MAX ? remaining : OTA_CHUNK_MAX;
             int n = httpd_req_recv(req, (char *)buf, (size_t)want);
             if (n <= 0) {
-                if (n == HTTPD_SOCK_ERR_TIMEOUT) continue;
+                if (n == HTTPD_SOCK_ERR_TIMEOUT) {
+                    if (++timeouts >= OTA_RECV_TIMEOUT_MAX) {
+                        werr = ESP_ERR_TIMEOUT;
+                        break;
+                    }
+                    continue;
+                }
                 werr = ESP_FAIL;
                 break;
             }
+            timeouts = 0;
             werr = ota_write_chunk(offset, buf, (size_t)n);
             if (werr != ESP_OK) break;
             offset += (uint32_t)n;
@@ -1264,63 +1291,76 @@ void web_server_start(void)
      * calling task first so the server inherits the higher priority. */
     vTaskPrioritySet(xTaskGetCurrentTaskHandle(), 6);
 
-    httpd_handle_t server = NULL;
-    ESP_ERROR_CHECK(httpd_start(&server, &cfg));
+    httpd_handle_t server = http_server;
+    if (server == NULL) {
+        ESP_ERROR_CHECK(httpd_start(&server, &cfg));
+        http_server = server;
+    }
     ESP_LOGI(TAG, "http server ready at task priority %d",
              (int)uxTaskPriorityGet(NULL));
 
-    httpd_uri_t root = {
+    /* Register the URI handlers only once. A second call (for example after a
+     * driver restart) must not re-register them, or it dies with
+     * ESP_ERR_HTTPD_HANDLER_EXISTS and reboots the device at every boot. */
+    if (http_server == server) {
+
+        httpd_uri_t root = {
         .uri = "/", .method = HTTP_GET, .handler = root_handler,
-    };
-    httpd_uri_t w = {
+        };
+        httpd_uri_t w = {
         .uri = "/api/weight", .method = HTTP_GET, .handler = api_weight,
-    };
-    httpd_uri_t t = {
+        };
+        httpd_uri_t t = {
         .uri = "/api/tare", .method = HTTP_POST, .handler = api_tare,
-    };
-    httpd_uri_t u = {
+        };
+        httpd_uri_t u = {
         .uri = "/api/unit", .method = HTTP_POST, .handler = api_unit,
-    };
-    httpd_uri_t a = {
+        };
+        httpd_uri_t a = {
         .uri = "/api/azt", .method = HTTP_POST, .handler = api_azt,
-    };
-    httpd_uri_t cstart = {
+        };
+        httpd_uri_t cstart = {
         .uri = "/api/cal/start", .method = HTTP_POST, .handler = api_cal_start,
-    };
-    httpd_uri_t cstate = {
+        };
+        httpd_uri_t cstate = {
         .uri = "/api/cal", .method = HTTP_GET, .handler = api_cal_state,
-    };
-    httpd_uri_t ota_get = {
+        };
+        httpd_uri_t ota_get = {
         .uri = "/api/ota", .method = HTTP_GET, .handler = api_ota_get,
-    };
-    httpd_uri_t ota_post = {
+        };
+        httpd_uri_t ota_post = {
         .uri = "/api/ota", .method = HTTP_POST, .handler = api_ota_post,
-    };
-    httpd_uri_t reboot = {
+        };
+        httpd_uri_t reboot = {
         .uri = "/api/reboot", .method = HTTP_POST, .handler = api_reboot,
-    };
+        };
 
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &root));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &w));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &t));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &u));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &a));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &cstart));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &cstate));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_get));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_post));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &reboot));
+        ESP_ERROR_CHECK(httpd_register_uri_handler(server, &root));
+        ESP_ERROR_CHECK(httpd_register_uri_handler(server, &w));
+        ESP_ERROR_CHECK(httpd_register_uri_handler(server, &t));
+        ESP_ERROR_CHECK(httpd_register_uri_handler(server, &u));
+        ESP_ERROR_CHECK(httpd_register_uri_handler(server, &a));
+        ESP_ERROR_CHECK(httpd_register_uri_handler(server, &cstart));
+        ESP_ERROR_CHECK(httpd_register_uri_handler(server, &cstate));
+        ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_get));
+        ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_post));
+        ESP_ERROR_CHECK(httpd_register_uri_handler(server, &reboot));
 
-    /* Fails the build if a route is added and the table is not enlarged, rather
-     * than rebooting the device on every boot. The names are spelled out because
-     * an #if on a function address is not something a C compiler can do. */
-#define ASSERT_HANDLER_FITS(n) \
-    _Static_assert((n) <= HTTP_MAX_HANDLERS, \
-                   "more URI handlers registered than the server was given room for")
-    ASSERT_HANDLER_FITS(10);
+        /* Count the URI handlers at compile time. If a route is added, add it to
+         * this list too - the assert fails the build instead of rebooting the
+         * device at every boot. The previous version restated the count as a
+         * literal ("10"), which silently did nothing if the literal was forgotten. */
+        enum {
+        H_ROOT, H_W, H_T, H_U, H_A, H_CSTART, H_CSTATE,
+        H_OTA_GET, H_OTA_POST, H_REBOOT,
+        HANDLER_COUNT,
+        };
+        _Static_assert(HANDLER_COUNT <= HTTP_MAX_HANDLERS,
+                   "more URI handlers registered than the server was given room for");
 
-    ESP_LOGI(TAG, "http server ready, %d handlers in a table of %d",
-             10, HTTP_MAX_HANDLERS);
+        ESP_LOGI(TAG, "http server ready, %d handlers in a table of %d",
+                 HANDLER_COUNT, HTTP_MAX_HANDLERS);
+    }
 }
 
 void net_start(void)

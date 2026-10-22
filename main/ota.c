@@ -304,6 +304,8 @@ void ota_abort(void)
 
 void ota_get_status(ota_status_t *out)
 {
+    if (s.lock == NULL) ota_init();
+    xSemaphoreTake(s.lock, portMAX_DELAY);
     memset(out, 0, sizeof(*out));
     out->state = s.state;
     out->written = s.written;
@@ -315,6 +317,7 @@ void ota_get_status(ota_status_t *out)
     strlcpy(out->error, s.error, sizeof(out->error));
     strlcpy(out->running_version, s.running_version, sizeof(out->running_version));
     strlcpy(out->target_version, s.target_version, sizeof(out->target_version));
+    xSemaphoreGive(s.lock);
 }
 
 const char *ota_running_version(void) { return s.running_version; }
