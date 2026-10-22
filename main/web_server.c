@@ -28,6 +28,7 @@
 #include "esp_http_client.h"
 #include "esp_http_server.h"
 #include "esp_heap_caps.h"
+#include "esp_wifi.h"
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -155,6 +156,10 @@ const char *wifi_current_password(void)
 }
 
 void wifi_set_auth_mode(int mode);
+
+/* Applied after every esp_wifi_start(): the driver comes up with modem power
+ * save and no transmit power limit, and neither survives a restart. */
+static void wifi_apply_radio_settings(void);
 
 void wifi_set_bssid(const char *txt)
 {
@@ -301,6 +306,14 @@ static void wifi_apply_config(void)
         break;
     }
 
+    /* Keep the station awake for every beacon. The driver scales the listen
+     * interval up to 409.6 ms on its own when there is broadcast/multicast
+     * traffic; while the station is asleep it cannot receive ACKs for the TCP
+     * stream we are sending, so a multi-segment transfer (the page) hangs on
+     * the send timeout while single-segment answers (/api/weight) survive.
+     * Measured 2026-10-22: large ping (1400 B) lost 100 %, 64 B ping passed. */
+    wc.sta.listen_interval = 1;
+
     esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &wc);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "set_config FAILED: %s - the password did NOT reach "
@@ -324,12 +337,93 @@ void wifi_set_auth_mode(int m)
     esp_wifi_set_mode(WIFI_MODE_STA);
     wifi_apply_config();
     esp_wifi_start();
+    /* The driver comes up with modem power save and no power limit, so the
+     * radio settings have to be re-applied after every start - not only at
+     * boot. */
+    wifi_apply_radio_settings();
     xEventGroupWaitBits(wifi_events, WIFI_DRIVER_READY_BIT, pdTRUE, pdFALSE,
                         pdMS_TO_TICKS(2000));
     wifi_config_want_connect = true;
     esp_wifi_connect();
 }
 
+
+/* Settings that belong to the radio itself and do NOT survive a driver
+ * restart.
+ *
+ * Every esp_wifi_start() brings the driver up with its own defaults: modem
+ * power save on and no transmit power limit. Both matter here, and both were
+ * lost in practice - the settings used to be applied once, at boot, in
+ * wifi_start(). Anything that restarted the driver afterwards (the `a` command,
+ * the `x 0` radio-on command, the scan command leaving the soft AP) silently
+ * put them back to the defaults.
+ *
+ * The result was measured 2026-10-22, on a device that had been up 25 hours:
+ * the station's listen interval had been scaled to 409.6 ms, which is modem
+ * power save, and the web page would not open while the small API answers kept
+ * working. The mechanism: the radio is asleep between beacons, so an incoming
+ * acknowledgement is only picked up at the next wake-up and the TCP window
+ * advances about one segment per 400 ms. A lost frame then costs a
+ * retransmission with exponential backoff (0.2, 0.4, 0.8, 1.6, 3.2, 6.4 s),
+ * which is where a 14 second gap between two segments came from. The API
+ * answer is one segment and survives; the page is eighteen and does not.
+ *
+ * So this function is called after every start, and the result is read back
+ * rather than assumed. */
+static void wifi_apply_radio_settings(void)
+{
+    /* TX power must be applied AFTER esp_wifi_start(), and then verified.
+     *
+     * Setting wifi_country_t.max_tx_power before the driver starts does not
+     * stick: measured, a requested 8.5 dBm read back as 80 - the full-power
+     * default. An over-driven transmitter is the documented cause of ESP32
+     * stations stuck in "auth expired / association expired": the AP drops them
+     * mid-authentication, which is exactly the reason=2 loop seen here, over and
+     * over, with a password that a phone accepts without complaint.
+     *
+     * Measured on this IDF version: the setter takes dBm and the getter returns
+     * dBm too - asking for 8 gave back 8. Earlier, with the limit only in
+     * wifi_country_t before start, the getter returned 80, which is not a
+     * physically meaningful transmit power and meant nothing was applied.
+     *
+     * The limit was 8 dBm for a long time, and that turned out to cost the web
+     * interface its usability. The reason=2 loop was fixed, but 8 dBm is a very
+     * small signal to send into a link measured at -68 dBm with 18 access points
+     * in range. Measured 2026-10-09, same protocol, page fetch with gzip, 10
+     * attempts each:
+     *
+     *     8 dBm   average 16.31 s   worst 30.00 s (the timeout)   best 0.68 s
+     *    17 dBm   average  1.21 s   worst  1.98 s                 best 0.39 s
+     *
+     * Thirteen times faster on average, and the worst case goes from sitting on
+     * the timeout to under two seconds. A five minute soak at 17 dBm produced
+     * zero disconnects and zero authentication failures, which is the symptom
+     * 8 dBm was introduced to prevent - so that limit was too conservative. The
+     * failure it fixed happened at unthrottled power, not at 17.
+     *
+     * The console command T <dBm> changes this at runtime. */
+    esp_err_t perr = esp_wifi_set_max_tx_power(17);
+    int8_t tx_dbm = 0;
+    esp_err_t gerr = esp_wifi_get_max_tx_power(&tx_dbm);
+    ESP_LOGW(TAG, "TX power set 17 dBm -> %s, reads back %d dBm",
+             esp_err_to_name(perr), (int)tx_dbm);
+    if (gerr != ESP_OK || tx_dbm != 17) {
+        ESP_LOGE(TAG, "TX power limit NOT in force (wanted 17, got %d)",
+                 (int)tx_dbm);
+    }
+
+    /* Power save must be OFF. IDF enables WIFI_PS_MIN_MODEM by default, so the
+     * station sleeps between DTIM beacons and stops answering the AP's polls.
+     * The router then logs reason=4 DISASSOC_DUE_TO_INACTIVITY and drops us,
+     * typically within seconds of associating. This device is mains-powered, so
+     * there is nothing to gain by sleeping.
+     *
+     * The listen interval the driver reports after a reconnect is the direct
+     * evidence of whether this took: 409600 us means the station is still
+     * sleeping, 102400 us means it is awake. */
+    esp_err_t ps = esp_wifi_set_ps(WIFI_PS_NONE);
+    ESP_LOGI(TAG, "power save off -> %s", esp_err_to_name(ps));
+}
 
 static void wifi_start(void)
 {
@@ -392,53 +486,9 @@ static void wifi_start(void)
     wifi_apply_config();
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    /* TX power must be applied AFTER esp_wifi_start(), and then verified.
-     *
-     * Setting wifi_country_t.max_tx_power before the driver starts does not
-     * stick: measured, a requested 8.5 dBm read back as 80 - the full-power
-     * default. An over-driven transmitter is the documented cause of ESP32
-     * stations stuck in "auth expired / association expired": the AP drops them
-     * mid-authentication, which is exactly the reason=2 loop seen here, over and
-     * over, with a password that a phone accepts without complaint.
-     *
-     * Measured on this IDF version: the setter takes dBm and the getter returns
-     * dBm too - asking for 8 gave back 8. Earlier, with the limit only in
-     * wifi_country_t before start, the getter returned 80, which is not a
-     * physically meaningful transmit power and meant nothing was applied.
-     *
-     * The limit was 8 dBm for a long time, and that turned out to cost the web
-     * interface its usability. The reason=2 loop was fixed, but 8 dBm is a very
-     * small signal to send into a link measured at -68 dBm with 18 access points
-     * in range. Measured 2026-10-09, same protocol, page fetch with gzip, 10
-     * attempts each:
-     *
-     *     8 dBm   average 16.31 s   worst 30.00 s (the timeout)   best 0.68 s
-     *    17 dBm   average  1.21 s   worst  1.98 s                 best 0.39 s
-     *
-     * Thirteen times faster on average, and the worst case goes from sitting on
-     * the timeout to under two seconds. A five minute soak at 17 dBm produced
-     * zero disconnects and zero authentication failures, which is the symptom
-     * 8 dBm was introduced to prevent - so that limit was too conservative. The
-     * failure it fixed happened at unthrottled power, not at 17.
-     *
-     * The console command T <dBm> changes this at runtime. */
-    esp_err_t perr = esp_wifi_set_max_tx_power(17);
-    int8_t tx_dbm = 0;
-    esp_err_t gerr = esp_wifi_get_max_tx_power(&tx_dbm);
-    ESP_LOGW(TAG, "TX power set 17 dBm -> %s, reads back %d dBm",
-             esp_err_to_name(perr), (int)tx_dbm);
-    if (gerr != ESP_OK || tx_dbm != 17) {
-        ESP_LOGE(TAG, "TX power limit NOT in force (wanted 17, got %d)",
-                 (int)tx_dbm);
-    }
-
-    /* Power save must be OFF. IDF enables WIFI_PS_MIN_MODEM by default, so the
-     * station sleeps between DTIM beacons and stops answering the AP's polls.
-     * The router then logs reason=4 DISASSOC_DUE_TO_INACTIVITY and drops us,
-     * typically within seconds of associating. This device is mains-powered, so
-     * there is nothing to gain by sleeping. */
-    esp_err_t ps = esp_wifi_set_ps(WIFI_PS_NONE);
-    ESP_LOGI(TAG, "power save off -> %s", esp_err_to_name(ps));
+    /* The radio settings do not survive a driver restart, so they are applied
+     * by wifi_apply_radio_settings() after every esp_wifi_start(). */
+    wifi_apply_radio_settings();
 
     xEventGroupWaitBits(wifi_events, WIFI_DRIVER_READY_BIT,
                         pdTRUE, pdFALSE, pdMS_TO_TICKS(2000));
@@ -771,6 +821,12 @@ static esp_err_t root_handler(httpd_req_t *req)
     httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate");
     httpd_resp_set_hdr(req, "Pragma", "no-cache");
     httpd_resp_set_hdr(req, "Expires", "0");
+    /* Close the connection after the body. Without this the client (curl, some
+     * browsers) keeps the socket open waiting for more data and hangs on the
+     * read timeout even though every byte was already sent. Measured 2026-10-22:
+     * all 7 765 gzip bytes reached the client, but the socket stayed open for
+     * the full 30 s send timeout. */
+    httpd_resp_set_hdr(req, "Connection", "close");
 
     /* One plain send with an explicit Content-Length.
      *
@@ -976,6 +1032,11 @@ void wifi_suspend(bool off)
         ESP_LOGE(TAG, "resume failed: %s", esp_err_to_name(err));
         return;
     }
+    /* The radio settings are the driver's, and the driver has just been
+     * restarted: without this the station comes back in modem power save with
+     * a scaled listen interval, and the page stops opening while the small API
+     * answers keep working. */
+    wifi_apply_radio_settings();
     xEventGroupWaitBits(wifi_events, WIFI_DRIVER_READY_BIT, pdTRUE, pdFALSE,
                         pdMS_TO_TICKS(2000));
     wifi_config_want_connect = true;
@@ -1078,6 +1139,9 @@ void wifi_scan_report(void)
         esp_wifi_set_mode(WIFI_MODE_STA);
         wifi_apply_config();
         esp_wifi_start();
+        /* Same as everywhere else: the radio settings do not survive the
+         * restart. */
+        wifi_apply_radio_settings();
         xEventGroupWaitBits(wifi_events, WIFI_DRIVER_READY_BIT, pdTRUE,
                             pdFALSE, pdMS_TO_TICKS(2000));
         wifi_config_want_connect = true;
@@ -1156,6 +1220,11 @@ void wifi_scan_report(void)
     free(recs);
     wifi_scanning = false;
     sta_retry_paused = false;
+    /* A scan on a connected station forces a re-association - the driver log
+     * shows "wifi:state: init -> auth" right after it. The radio settings are
+     * re-applied here so that the state of the radio after a scan does not
+     * depend on which path the driver took to get there. */
+    wifi_apply_radio_settings();
     esp_wifi_connect();
 }
 
