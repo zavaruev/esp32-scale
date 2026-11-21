@@ -5,6 +5,7 @@
  * before it is accepted, and 1500 ms of continuous press produces BTN_LONG
  * instead of BTN_SHORT. Long is emitted exactly once, on the threshold.
  */
+#include <stdint.h>
 #include <string.h>
 
 #include "driver/gpio.h"
@@ -52,6 +53,10 @@ static const char *const s_names[BTN_COUNT] = {
 };
 
 static button_handler_t s_handler;
+
+/* Debounced state published by the scanning task, read by /api/buttons.
+ * Reading the raw GPIO from HTTP would race the scanner on the same row pins. */
+static volatile uint8_t s_settled_mask;
 
 /* Per-key state, touched only by the scanning task. */
 static struct {
@@ -116,6 +121,11 @@ static void buttons_task(void *arg)
                 raw != s_state[i].settled) {
                 s_state[i].settled = raw;
                 if (raw) {
+                    s_settled_mask |= (1 << i);
+                } else {
+                    s_settled_mask &= ~(1 << i);
+                }
+                if (raw) {
                     s_state[i].pressed_us = esp_timer_get_time();
                     s_state[i].long_sent = false;
                 } else if (!s_state[i].long_sent) {
@@ -166,4 +176,11 @@ void buttons_dump(void)
                s_names[i], s_keys[i].row, s_keys[i].col,
                (int)scan_key(s_keys[i].row, s_keys[i].col));
     }
+}
+
+uint8_t buttons_state(void)
+{
+    /* Return the scanner's debounced snapshot, never touch the row GPIOs here:
+     * doing so from the HTTP task races the scanner and breaks detection. */
+    return s_settled_mask;
 }

@@ -37,6 +37,7 @@
 #include "freertos/event_groups.h"
 #include "nvs_flash.h"
 #include "ota.h"
+#include "buttons.h"
 #include "scale_filter.h"
 #include "weight_task.h"
 
@@ -589,6 +590,24 @@ static esp_err_t api_azt(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, on ? "{\"azt\":true}" : "{\"azt\":false}",
                     on ? 12 : 13);
+    return ESP_OK;
+}
+
+/* Diagnostic: raw state of the 6-key matrix, so it can be tested without USB.
+ * Bit 0 = ED, 1 = SUM, 2 = ZERO, 3 = T, 4 = ITT, 5 = SBR. */
+static esp_err_t api_buttons(httpd_req_t *req)
+{
+    uint8_t mask = buttons_state();
+    char buf[64];
+    int n = snprintf(buf, sizeof(buf),
+                     "{\"mask\":%u,\"ED\":%u,\"SUM\":%u,\"ZERO\":%u,"
+                     "\"T\":%u,\"ITT\":%u,\"SBR\":%u}",
+                     (unsigned)mask,
+                     (unsigned)((mask >> 0) & 1), (unsigned)((mask >> 1) & 1),
+                     (unsigned)((mask >> 2) & 1), (unsigned)((mask >> 3) & 1),
+                     (unsigned)((mask >> 4) & 1), (unsigned)((mask >> 5) & 1));
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, buf, n);
     return ESP_OK;
 }
 
@@ -1319,6 +1338,9 @@ void web_server_start(void)
         httpd_uri_t a = {
         .uri = "/api/azt", .method = HTTP_POST, .handler = api_azt,
         };
+        httpd_uri_t btn = {
+        .uri = "/api/buttons", .method = HTTP_GET, .handler = api_buttons,
+        };
         httpd_uri_t cstart = {
         .uri = "/api/cal/start", .method = HTTP_POST, .handler = api_cal_start,
         };
@@ -1340,6 +1362,7 @@ void web_server_start(void)
         ESP_ERROR_CHECK(httpd_register_uri_handler(server, &t));
         ESP_ERROR_CHECK(httpd_register_uri_handler(server, &u));
         ESP_ERROR_CHECK(httpd_register_uri_handler(server, &a));
+        ESP_ERROR_CHECK(httpd_register_uri_handler(server, &btn));
         ESP_ERROR_CHECK(httpd_register_uri_handler(server, &cstart));
         ESP_ERROR_CHECK(httpd_register_uri_handler(server, &cstate));
         ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_get));
@@ -1351,7 +1374,7 @@ void web_server_start(void)
          * device at every boot. The previous version restated the count as a
          * literal ("10"), which silently did nothing if the literal was forgotten. */
         enum {
-        H_ROOT, H_W, H_T, H_U, H_A, H_CSTART, H_CSTATE,
+        H_ROOT, H_W, H_T, H_U, H_A, H_BTN, H_CSTART, H_CSTATE,
         H_OTA_GET, H_OTA_POST, H_REBOOT,
         HANDLER_COUNT,
         };

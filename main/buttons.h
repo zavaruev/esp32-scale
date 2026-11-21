@@ -45,4 +45,9 @@ esp_err_t buttons_init(button_handler_t handler);
 /* Debug helper: prints the raw matrix to the serial console once. */
 void buttons_dump(void);
 
+/* Returns a bitmask of currently pressed keys (bit = button_id_t).
+ * Used by the /api/buttons diagnostic endpoint so the matrix can be tested
+ * without a USB console. */
+uint8_t buttons_state(void);
+
 #endif /* BUTTONS_H */
