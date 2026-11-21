@@ -16,6 +16,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "audio.h"
 #include "oled_ui.h"
 #include "ssd1306.h"
 #include "weight_task.h"
@@ -28,6 +29,16 @@ static bool s_locked;
 static double s_locked_value, s_candidate;
 static int s_quiet;
 static bool s_candidate_valid;
+static bool s_was_locked;   /* to beep once on the rising edge of HOLD */
+
+/* A small check mark drawn with two strokes, width ~9 px. */
+static void draw_check(int x, int y, bool on)
+{
+    /* short stroke down-right */
+    for (int i = 0; i < 4; i++) oled_fill_rect(x + i, y + 4 + i, 2, 2, on);
+    /* long stroke up-right */
+    for (int i = 0; i < 7; i++) oled_fill_rect(x + 3 + i, y + 7 - i, 2, 2, on);
+}
 
 static double hold_or_show(double grams, bool stable)
 {
@@ -110,6 +121,13 @@ static void draw_screen(const scale_snapshot_t *s)
         oled_text((OLED_WIDTH - uw)/2, 50, unit, true);
     }
 
+    /* When the reading has settled, show a check mark next to the unit. */
+    if (s_locked) {
+        int uw = (int)strlen(unit) * 6;
+        int ux = (OLED_WIDTH - uw) / 2;
+        draw_check(ux + uw + 3, 50, true);
+    }
+
     /* Status flags at the bottom. */
     int bx = 2;
     if (s->stable)      bx = oled_text(bx, 108, "STB ", true);
@@ -126,6 +144,12 @@ static void oled_ui_task(void *arg)
         scale_snapshot_t s;
         weight_task_get(&s);
         draw_screen(&s);
+        /* One short beep when the weight first settles. Skip the zero case:
+         * an empty platform locks instantly and would beep on every tare. */
+        if (s_locked && !s_was_locked && !s.zero) {
+            audio_play(AUDIO_STABLE);
+        }
+        s_was_locked = s_locked;
         oled_flush();
         vTaskDelay(pdMS_TO_TICKS(UI_PERIOD_MS));
     }
