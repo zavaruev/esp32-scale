@@ -1,10 +1,10 @@
 /*
  * oled_ui.c - weighing screen on the 64x128 portrait OLED.
  *
- * Portrait layout (top to bottom):
- *   - unit (g / kg / oz), small label
- *   - the weight: integer part in BIG digits, fraction in small digits
- *   - status flags (STB / ZER / TRE / HLD)
+ * Portrait layout (top to bottom), weights >= 1 kg:
+ *   - big kilogram value, then small "kg" label
+ *   - big gram remainder value, then small "g" label
+ *   - (below 1 kg: big value and small "g" label)
  * One task reads the snapshot and redraws at ~7 Hz. No LVGL, no mutex.
  */
 #include <math.h>
@@ -97,22 +97,22 @@ static void draw_screen(const scale_snapshot_t *s)
     /* Screen is 128 rows: labels sit in the bottom lines, like the old
      * design where they were drawn at the bottom of the panel. */
     if (grams_now < 1000.0) {
-        /* < 1 kg: big value, "g" label at the bottom. */
+        /* < 1 kg: big value, small "g" label right under it. */
         snprintf(buf, sizeof(buf), "%d", (int)(grams_now + 0.5));
         draw_big(2, buf);
-        draw_small(80, "g");
+        draw_small(26, "g");
     } else {
-        /* >= 1 kg: big kg value, big grams value, then the "kg" and "g"
-         * labels in the bottom lines. */
+        /* >= 1 kg: big kg value, small "kg" label under it, big grams
+         * value, small "g" label under it - labels follow their digits. */
         int kg = (int)(grams_now / 1000.0);
         int rem = (int)(grams_now - kg * 1000.0 + 0.5);
         if (rem >= 1000) { kg++; rem -= 1000; }
         snprintf(buf, sizeof(buf), "%d", kg);
         draw_big(2, buf);
+        draw_small(26, "kg");
         snprintf(buf, sizeof(buf), "%d", rem);
-        draw_big(36, buf);
-        draw_small(62, "kg");
-        draw_small(80, "g");
+        draw_big(38, buf);
+        draw_small(62, "g");
     }
 }
 

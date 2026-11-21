@@ -57,7 +57,8 @@ static const uint8_t font5x7[][6] = {
     /* Lowercase letters used by the unit labels (g, k, oz). Without these
      * glyph() returned NULL and the units were silently never drawn.
      * Columns: bit0 = top row (oled_pixel row 0). */
-    {'g',0x00,0x5E,0x62,0x1C,0x0C},
+    /* Clear lowercase 'g': bowl with a descender loop below the top arc. */
+    {'g',0x00,0x5E,0x7E,0x12,0x0C},
     {'k',0x7F,0x08,0x14,0x22,0x41},
     {'o',0x00,0x3C,0x42,0x42,0x3C},
     {'z',0x00,0x62,0x52,0x4A,0x46},
