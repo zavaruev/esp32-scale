@@ -75,32 +75,39 @@ static void draw_screen(const scale_snapshot_t *s)
         return;
     }
 
-    /*.Width of a 7-seg string =sum(13 per digit, 5 for '.', 11 for '-'). */
-    /* Layout in the 64 px wide portrait window:
-     *   < 1 kg : big grams value / "g"
-     *   >=1 kg : big kg value / "kg" / big g remainder / "g"             */
+    /* Helper: draw a string with the BIG font (5x7 x 2). Fit to width by
+     * choosing scale 3 (3 digits, 54 px) or 2 (4 digits, 48 px). */
     char buf[24];
+    int draw_big(int y, const char *txt)
+    {
+        int n = (int)strlen(txt);
+        if (n <= 3) {
+            int w = n * 18;
+            oled_big_text((OLED_WIDTH - w) / 2, y, txt, true);
+        } else {
+            int w = n * 12;
+            oled_text((OLED_WIDTH - w) / 2, y, txt, true);
+        }
+        return 0;
+    }
 
     if (grams_now < 1000.0) {
-        int v = (int)(grams_now + 0.5);
-        snprintf(buf, sizeof(buf), "%d", v);
-        int w = 0;
-        for (char *p = buf; *p; p++) w += (*p == '.') ? 5 : 13;
-        oled_7seg((OLED_WIDTH - w) / 2, 40, buf, true);
-        oled_text((OLED_WIDTH - 6) / 2, 76, "g", true);
+        /* < 1 kg: big value + small unit below. */
+        snprintf(buf, sizeof(buf), "%d", (int)(grams_now + 0.5));
+        draw_big(36, buf);
+        oled_text((OLED_WIDTH - 12) / 2, 74, "g", true);
     } else {
+        /* >= 1 kg, three lines, per user spec:
+         *   big kg value / small "kg" / big gram remainder / small "g" */
         int kg = (int)(grams_now / 1000.0);
         int rem = (int)(grams_now - kg * 1000.0 + 0.5);
         if (rem >= 1000) { kg++; rem -= 1000; }
         snprintf(buf, sizeof(buf), "%d", kg);
-        int w1 = (int)strlen(buf) * 13;
-        oled_7seg((OLED_WIDTH - w1) / 2, 14, buf, true);
-        oled_text((OLED_WIDTH - 12) / 2, 40, "kg", true);
-
+        draw_big(10, buf);
+        oled_text((OLED_WIDTH - 12) / 2, 36, "kg", true);
         snprintf(buf, sizeof(buf), "%d", rem);
-        int w2 = (int)strlen(buf) * 13;
-        oled_7seg((OLED_WIDTH - w2) / 2, 56, buf, true);
-        oled_text((OLED_WIDTH - 6) / 2, 82, "g", true);
+        draw_big(50, buf);
+        oled_text((OLED_WIDTH - 6) / 2, 76, "g", true);
     }
 }
 
