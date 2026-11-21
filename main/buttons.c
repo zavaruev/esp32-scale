@@ -22,10 +22,14 @@
 static const char *TAG = "buttons";
 
 #define ROW1 GPIO_NUM_6   /* ribbon contact 1 */
-#define ROW2 GPIO_NUM_7   /* ribbon contact 5 */
+/* Contacts 4 and 5 turned out to be wired the other way round: contact 4 is
+ * on GPIO7 and contact 5 is on GPIO13. Swapped accordingly - this makes all
+ * six keys map to a valid row+column pair (previously 0/T/ITT were row+row or
+ * column+column and could never be detected). */
+#define ROW2 GPIO_NUM_13  /* ribbon contact 5 */
 #define COL2 GPIO_NUM_8   /* ribbon contact 2 */
 #define COL3 GPIO_NUM_9   /* ribbon contact 3 */
-#define COL4 GPIO_NUM_13  /* ribbon contact 4 */
+#define COL4 GPIO_NUM_7   /* ribbon contact 4 */
 
 #define SCAN_PERIOD_MS   5
 #define DEBOUNCE_SCANS   4
