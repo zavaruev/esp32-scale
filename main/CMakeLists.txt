@@ -1,20 +1,15 @@
-# The embedded web page must be regenerated whenever main/web/index.html changes,
-# not merely when CMake reconfigures.
+# Generated headers are real build steps, not configure-time side effects.
 #
-# The first version used execute_process(), which runs at configure time only. On
-# an incremental build it silently did nothing: the HTML was edited, the build
-# reported success, and the device kept serving the previous page. That is the
-# worst possible failure - it looks like a caching problem in the browser.
-#
-# add_custom_command with the header as OUTPUT and the HTML as DEPENDS makes it a
-# real build step. Changing the header then also changes web_server.c's input, so
-# the component is recompiled. The generated header stays checked in so a fresh
-# clone builds without Python.
+# The web page used to be embedded with execute_process(), which runs only when
+# CMake configures. On an incremental build the HTML changed, the build reported
+# success, and the device kept serving the old page - indistinguishable from a
+# browser cache problem. add_custom_command() with the header as OUTPUT fixes
+# that.
 set(WEB_HTML  "${CMAKE_CURRENT_LIST_DIR}/web/index.html")
 set(WEB_HEADER "${CMAKE_CURRENT_LIST_DIR}/index_html.h")
 
 # IDF evaluates this file twice: once for the real build and once through
-# "cmake -P" while scanning for component requirements. add_custom_command is not
+# "cmake -P" while scanning component requirements. add_custom_command is not
 # permitted in script mode, hence the guard - CMake documents CMAKE_SCRIPT_MODE_FILE
 # as set exactly when the -P form is used.
 if(NOT DEFINED CMAKE_SCRIPT_MODE_FILE)
@@ -35,9 +30,17 @@ idf_component_register(
          "web_server.c"
          "ota.c"
          "hx711.c"
+         "st7789.c"
+         "buttons.c"
+         "audio.c"
+         "ui.c"
          "${WEB_HEADER}"
     INCLUDE_DIRS "."
     REQUIRES esp_driver_gpio
+             esp_driver_spi
+             esp_lcd
+             esp_lvgl_port
+             lvgl
              esp_timer
              nvs_flash
              esp_wifi

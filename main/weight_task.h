@@ -120,4 +120,10 @@ void weight_task_cal_get(cal_state_t *out);
 esp_err_t weight_task_set_calibration(float cal_factor, int32_t tare_offset);
 void weight_task_set_azt(bool enabled);
 
+/* Reference mass (grams) used by the one-touch calibration on the front panel.
+ * Persisted in NVS; the default is 73.03 g, the weight used for the paired
+ * measurements in AGENTS.md. Set it once from the web page or the `F` command. */
+float weight_task_get_ref_mass(void);
+esp_err_t weight_task_set_ref_mass(float mass);
+
 #endif /* WEIGHT_TASK_H */

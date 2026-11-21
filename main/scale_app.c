@@ -22,6 +22,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "audio.h"
+#include "buttons.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -29,6 +31,8 @@
 #include "hx711.h"
 #include "ota.h"
 #include "scale_filter.h"
+#include "st7789.h"
+#include "ui.h"
 #include "web_server.h"
 #include "weight_task.h"
 
@@ -226,6 +230,64 @@ static void raw_dump(void)
     fflush(stdout);
 }
 
+/* ------------------------------------------------------- front panel buttons
+ *
+ * Called from the button task on core 1. Everything here is non-blocking and
+ * goes through the published snapshot / public APIs - no direct HX711 access.
+ */
+static void on_button(button_id_t id, button_press_t press)
+{
+    if (press == BTN_SHORT) {
+        switch (id) {
+        case BTN_ED: {
+            scale_snapshot_t s;
+            weight_task_get(&s);
+            int next = ((int)s.unit + 1) % 3;
+            weight_task_set_unit((scale_unit_t)next);
+            break;
+        }
+        case BTN_ZERO:
+        case BTN_T:
+            weight_task_tare();
+            audio_play(AUDIO_TARE);
+            break;
+        case BTN_ITT:
+            /* HOLD is computed by the UI task; show the weighing screen. */
+            ui_show_page(UI_PAGE_WEIGH);
+            break;
+        case BTN_SUM:
+        case BTN_SBR:
+            ui_show_page(UI_PAGE_WEIGH);
+            break;
+        default:
+            break;
+        }
+        return;
+    }
+
+    /* Long press. */
+    switch (id) {
+    case BTN_T: {
+        scale_snapshot_t s;
+        weight_task_get(&s);
+        weight_task_set_azt(!s.azt_enabled);
+        audio_play(s.azt_enabled ? AUDIO_AZT_OFF : AUDIO_AZT_ON);
+        break;
+    }
+    case BTN_SUM: {
+        ui_show_page(UI_PAGE_CAL);
+        audio_play(AUDIO_CAL_START);
+        weight_task_cal_start(weight_task_get_ref_mass());
+        break;
+    }
+    case BTN_SBR:
+        ui_show_page(UI_PAGE_WEIGH);
+        break;
+    default:
+        break;
+    }
+}
+
 static void print_constants(void)
 {
     scale_snapshot_t s;
@@ -234,6 +296,32 @@ static void print_constants(void)
            (double)s.cal_factor, (long)s.tare_offset, (int)s.unit,
            (double)s.sigma_mg);
     fflush(stdout);
+}
+
+/* Bring up the display only after the rest of the system has settled.
+ *
+ * On cold start the 3.3 V rail is loaded all at once by WiFi, the HX711, the
+ * backlight and the panel. Initialising an ST7789 in that window is the most
+ * likely reason the previous module came up fine and then went black after a
+ * few minutes. Delaying by 3 s lets the regulator and PSRAM timing settle. */
+static void display_init_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(3000));
+
+    esp_lcd_panel_io_handle_t lcd_io = NULL;
+    esp_lcd_panel_handle_t lcd_panel = NULL;
+    esp_err_t err = st7789_init(&lcd_io, &lcd_panel);
+    if (err != ESP_OK) {
+        ESP_LOGE("app", "delayed display init failed: %s", esp_err_to_name(err));
+        vTaskDelete(NULL);
+        return;
+    }
+    err = ui_init(lcd_io, lcd_panel);
+    if (err != ESP_OK) {
+        ESP_LOGE("app", "delayed UI init failed: %s", esp_err_to_name(err));
+    }
+    vTaskDelete(NULL);
 }
 
 void app_main(void)
@@ -249,7 +337,13 @@ void app_main(void)
     ESP_ERROR_CHECK(net_start());
     wifi_start_ap_fallback();
 
-    printf("#READY commands: c | t | d [min] | m [grams] | w | R(raw log) | x 0|1 (wifi) | s(scan) | h(selftest) | a 0..2 | p 0..1 | k <password> | b <MAC> | T <dBm>\n");
+    /* Display + UI come up in their own task after 3 s (see above). Audio and
+     * buttons start immediately - they do not depend on the panel. */
+    xTaskCreatePinnedToCore(display_init_task, "disp_init", 4096, NULL, 5, NULL, 1);
+    ESP_ERROR_CHECK(audio_init());
+    ESP_ERROR_CHECK(buttons_init(on_button));
+
+    printf("#READY commands: c | t | d [min] | m [grams] | w | R(raw log) | x 0|1 (wifi) | s(scan) | h(selftest) | a 0..2 | p 0..1 | k <password> | b <MAC> | T <dBm> | A <0..7>(audio) | F <g>(ref mass) | Z(buttons) | Y 0|1(backlight)\n");
     fflush(stdout);
 
     char line[64];
@@ -308,6 +402,17 @@ void app_main(void)
                     fflush(stdout);
                     break;
                 case 'R': raw_dump(); break;
+                case 'A': audio_test((int)num); break;
+                case 'F': {
+                    esp_err_t e = weight_task_set_ref_mass((float)num);
+                    printf("#REF_MASS,%.2f,%s\n", num, esp_err_to_name(e));
+                    break;
+                }
+                case 'Z': buttons_dump(); break;
+                case 'Y':
+                    st7789_backlight(num > 0);
+                    printf("#BACKLIGHT,%d\n", num > 0);
+                    break;
                 case 'x':
                     wifi_suspend(num > 0);   /* x 1 = radio off, x 0 = radio on */
                     fflush(stdout);

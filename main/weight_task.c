@@ -24,6 +24,7 @@ static const char *TAG = "weight";
 #define NVS_KEY_CAL "cal_factor"
 #define NVS_KEY_TARE "tare_offset"
 #define NVS_KEY_UNIT "unit"
+#define NVS_KEY_REF_MASS "ref_mass"   /* reference weight for panel calibration */
 /* ~4.5 s of warm-up before the boot tare is taken. */
 #define BOOT_TARE_SETTLE_SAMPLES 51
 /* How far the platform may sit from the confirmed tare and still count as
@@ -36,6 +37,11 @@ static const char *TAG = "weight";
  * from a loaded one. */
 static int32_t nvs_tare_counts;
 static bool have_nvs_tare;
+
+/* Mass of the reference used by the one-touch calibration on the front panel.
+ * Set once from the web interface or the `F` console command; 73.03 g is the
+ * reference already used for the paired measurements in AGENTS.md. */
+static float ref_mass = 73.03f;
 
 #define NVS_MAGIC   0xAA55BEEF
 #define NVS_KEY_MAGIC "magic"
@@ -109,6 +115,13 @@ static bool nvs_load(scale_filter_t *f)
     nvs_get_i32(h, NVS_KEY_TARE, &tare);
     nvs_get_u8(h, NVS_KEY_UNIT, &unit);
 
+    size_t ref_len = sizeof(ref_mass);
+    float stored_ref = 0.0f;
+    if (nvs_get_blob(h, NVS_KEY_REF_MASS, &stored_ref, &ref_len) == ESP_OK &&
+        ref_len == sizeof(stored_ref) && stored_ref > 0.0f) {
+        ref_mass = stored_ref;
+    }
+
     /* Read the calibration back the way it was written.
      *
      * nvs_save stores cal_factor with nvs_set_blob, because it is a float and the
@@ -176,6 +189,7 @@ static esp_err_t nvs_save(const scale_filter_t *f)
     nvs_set_blob(h, NVS_KEY_CAL, &cal, sizeof(cal));
     nvs_set_i32(h, NVS_KEY_TARE, f->tare_offset);
     nvs_set_u8(h, NVS_KEY_UNIT, (uint8_t)f->unit);
+    nvs_set_blob(h, NVS_KEY_REF_MASS, &ref_mass, sizeof(ref_mass));
     nvs_set_u32(h, NVS_KEY_MAGIC, NVS_MAGIC);
     err = nvs_commit(h);
     nvs_close(h);
@@ -660,7 +674,9 @@ esp_err_t weight_task_cal_start(double mass_hint)
     cal_running = true;
     memset(&cal_state, 0, sizeof(cal_state));
     cal_mass_hint = mass_hint;
-    BaseType_t ok = xTaskCreate(cal_task, "cal", 4096, NULL, 4, NULL);
+    /* Pin the wizard to core 1: it only polls the snapshot, and core 0 must stay
+     * the sole owner of the HX711 read window. */
+    BaseType_t ok = xTaskCreatePinnedToCore(cal_task, "cal", 4096, NULL, 4, NULL, 1);
     if (ok != pdPASS) {
         cal_running = false;
         return ESP_ERR_NO_MEM;
@@ -710,4 +726,21 @@ void weight_task_set_azt(bool enabled)
     xSemaphoreTake(lock, portMAX_DELAY);
     filter.azt_enabled = enabled;
     xSemaphoreGive(lock);
+}
+
+float weight_task_get_ref_mass(void)
+{
+    return ref_mass;
+}
+
+esp_err_t weight_task_set_ref_mass(float mass)
+{
+    if (mass <= 0.0f) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    xSemaphoreTake(lock, portMAX_DELAY);
+    ref_mass = mass;
+    esp_err_t err = nvs_save(&filter);
+    xSemaphoreGive(lock);
+    return err;
 }
