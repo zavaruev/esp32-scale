@@ -113,15 +113,17 @@ static void draw_screen(const scale_snapshot_t *s)
         int xkg = (OLED_WIDTH - wkg) / 2;
         if (xkg < 0) xkg = 0;
         oled_big_text(xkg, 14, line1, true);
-        /* Line 2: "kg". */
-        oled_text((OLED_WIDTH - 12) / 2, 38, "kg", true);
+        /* Line 2: "kg" — BIG so it is visible through the window. */
+        int wku = 2 * 18;
+        oled_big_text((OLED_WIDTH - wku) / 2, 36, "kg", true);
         /* Line 3: big grams remainder. */
         int wg = (int)strlen(line2) * 18;
         int xg = (OLED_WIDTH - wg) / 2;
         if (xg < 0) xg = 0;
-        oled_big_text(xg, 52, line2, true);
-        /* Line 4: "g". */
-        oled_text((OLED_WIDTH - 6) / 2, 76, "g", true);
+        oled_big_text(xg, 58, line2, true);
+        /* Line 4: "g" — BIG. */
+        int wgu = 18;
+        oled_big_text((OLED_WIDTH - wgu) / 2, 82, "g", true);
     } else {
         /* Under 1 kg: show grams (or selected unit) as an integer.
          * Up to 3 digits fit in BIG (3*18=54 px). 4+ digits fall back to the
@@ -141,20 +143,20 @@ static void draw_screen(const scale_snapshot_t *s)
             if (x1 < 0) x1 = 0;
             oled_text(x1, 30, line1, true);
         }
-        /* Unit under the number, smaller. */
-        int uw = (int)strlen(unit) * 6;
-        oled_text((OLED_WIDTH - uw)/2, 50, unit, true);
+        /* Unit under the number — BIG so it is seen through the window. */
+        int uw = (int)strlen(unit) * 18;
+        oled_big_text((OLED_WIDTH - uw)/2, 50, unit, true);
     }
 
     /* When the reading has settled, show a check mark next to the unit. */
     if (s_locked) {
         if (over_kg) {
-            /* next to the "g" line (y=76), or next to "kg" if you prefer */
-            draw_check((OLED_WIDTH - 6) / 2 + 8, 76, true);
+            /* next to the big "g" line */
+            draw_check((OLED_WIDTH - 18) / 2 + 20, 84, true);
         } else {
-            int uw = (int)strlen(unit) * 6;
+            int uw = (int)strlen(unit) * 18;
             int ux = (OLED_WIDTH - uw) / 2;
-            draw_check(ux + uw + 3, 50, true);
+            draw_check(ux + uw + 2, 52, true);
         }
     }
 

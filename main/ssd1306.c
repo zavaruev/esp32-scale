@@ -111,7 +111,7 @@ int oled_big_text(int x, int y, const char *str, bool on)
             cx += 15;
             continue;
         }
-        const uint8_t *g = (c >= '0' && c <= '9') ? glyph(c) : NULL;
+        const uint8_t *g = glyph(c);   /* digits and letters, scaled alike */
         if (!g) { cx += 18; continue; }
         for (int col = 0; col < 5; col++)
             for (int row = 0; row < 7; row++)
