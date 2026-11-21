@@ -151,23 +151,45 @@ purpose, by request. The device acts as a station only.
 
 ## Front panel, display and buzzer
 
-The front panel drives a 2.0" ST7789 TFT (240×320, mounted sideways so LVGL uses
-320×240), a 6-key matrix and a passive piezo buzzer on GPIO47.
+The current build (`display-oled` branch) drives a **0.96" OLED 128×64 over I²C**
+in portrait orientation, a 6-key matrix and an active piezo buzzer on GPIO47.
+The weight is shown in large digits, with the unit underneath; above 1 kg the
+display shows two lines (`1 kg` and the gram remainder).
 
-The physical wiring, the button matrix and the core placement are documented in
-**[docs/pinout.md](docs/pinout.md)** — that is the single reference to use when
-soldering. In short: display on GPIO 2/4/5/10/11/12, buttons on 6/7/8/9/13,
-buzzer on GPIO47, HX711 unchanged on 16/17. The button ribbon is a 2x3 matrix:
-row wires on contacts 1 and 5, column wires on contacts 2, 3 and 4.
+Wiring is documented in **[docs/pinout-oled.md](docs/pinout-oled.md)**. In short:
+OLED SDA/SCL on GPIO 14/21, buzzer I/O on GPIO47, HX711 unchanged on 16/17.
+The button ribbon is a 2×3 matrix on contacts 1–5:
 
-New console commands: `Z` (read all buttons), `Y 0|1` (backlight), `A <0..7>`
-(play a beep pattern), `F <grams>` (set the reference mass for one-touch
-calibration). Hold `СУМ` for 1.5 s to start calibration; the wizard uses the mass
-set by `F` (73.03 g by default).
+| Ribbon contact | GPIO |
+|---|---|
+| 1 (row 1) | 6 |
+| 5 (row 2) | **13** |
+| 2 (column) | 8 |
+| 3 (column) | 9 |
+| 4 (column) | **7** |
+
+⚠️ Contacts **4 and 5 are wired the other way round** on the ribbon, so column
+4 is GPIO7 and row 2 is GPIO13. The firmware accounts for this; all six keys
+(ЕД, СУМ, ИТТ, СБР, 0, Т) are confirmed working. Pressing `0` takes the tare and
+stores it in NVS.
+
+New console commands: `Z` (read all buttons), `A <0..7>` (play a beep pattern),
+`F <grams>` (set the reference mass for one-touch calibration). Hold `СУМ` for
+1.5 s to start calibration; the wizard uses the mass set by `F` (73.03 g by
+default). A diagnostic `GET /api/buttons` reports the live matrix and raw GPIO
+levels.
 
 Everything new runs on **Core 1**; Core 0 remains the sole owner of the HX711.
 The buzzer draws only a few mA directly from a GPIO, so it does not disturb the
 measurement supply.
+
+### Alternative display branch
+
+An earlier variant for a **GMT020-02-8P ST7789 TFT (240×320) with LVGL** is kept
+in the `display-gmt020` branch. Switch with `git checkout display-gmt020` (or
+back with `git checkout display-oled`); see `docs/pinout.md` for that wiring.
+It is preserved for a replacement module — the first module failed after a few
+minutes of operation.
 
 ## Updating the firmware
 
@@ -286,11 +308,12 @@ figure can be trusted.**
 | `main/web_server.c` | WiFi and HTTP on **Core 1** |
 | `main/scale_app.c` | initialisation and the serial console |
 | `main/web/index.html` | interface source, readable and commented |
-| `main/st7789.{c,h}` | SPI2 + esp_lcd ST7789 driver, backlight |
-| `main/buttons.{c,h}` | 2×4 membrane matrix, debounce, short/long press |
-| `main/ui.{c,h}` | LVGL weighing and calibration screens |
+| `main/ssd1306.{c,h}` | I²C SSD1306 driver + 1-bit framebuffer renderer |
+| `main/oled_ui.{c,h}` | portrait weight screen, big digits, units |
+| `main/buttons.{c,h}` | 2×3 membrane matrix, debounce, short/long press |
 | `main/audio.{c,h}` | active buzzer beep patterns on GPIO47 |
-| `docs/pinout.md` | complete wiring reference |
+| `docs/pinout-oled.md` | wiring reference for the OLED build |
+| `docs/pinout.md` | wiring reference for the `display-gmt020` branch |
 
 The core split is not a style preference but a necessity: **Core 0 does
 measurement only, Core 1 does networking and the interface only.** The
