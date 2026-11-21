@@ -119,7 +119,7 @@ static void draw_screen(const scale_snapshot_t *s)
      * as in the web page badges: STABLE, ZERO, TARE, AVG, HOLD. */
     {
         int cy = 84;
-        if (s->stable)      { oled_text(28, cy, "STABLE", true); cy += 8; }
+        if (s->stable)      { oled_text(28, cy, "STBL", true); cy += 8; }
         if (s->zero)        { oled_text(28, cy, "ZERO",  true); cy += 8; }
         if (s->tare_active) { oled_text(28, cy, "TARE",  true); cy += 8; }
         if (s->avg_n >= 45) { oled_text(28, cy, "AVG",   true); cy += 8; }
