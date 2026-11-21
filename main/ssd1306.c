@@ -1,8 +1,9 @@
 /*
- * ssd1306.c - 0.96" I2C OLED, 128x64, with a minimal 1-bit framebuffer.
+ * ssd1306.c - 0.96" I2C OLED 128x64, logical PORTRAIT 64x128.
  *
- * Based on Espressif's i2c_oled example. The panel is written as a full frame
- * each refresh (1024 bytes) - at 400 kHz I2C that is ~20 ms, plenty for a scale.
+ * The logical framebuffer is 64 wide x 128 tall. In oled_flush() it is rotated
+ * 90 degrees into the panel's native 128x64 GDDRAM (page = 8 rows). A real
+ * rotation (not a transpose/mirror) keeps glyphs the right way up.
  */
 #include <string.h>
 
@@ -20,14 +21,18 @@ static const char *TAG = "ssd1306";
 
 #define OLED_I2C_ADDR  0x3C
 #define OLED_I2C_CLK   400000
+#define PHYS_W 128
+#define PHYS_H 64
 
 static esp_lcd_panel_handle_t s_panel;
-/* SSD1306 GDDRAM is mapped vertically: byte = 8 rows in one column. */
+/* Logical portrait FB: bit (x,y) at s_fb[x + (y>>3)*64]. */
 static uint8_t s_fb[OLED_WIDTH * OLED_HEIGHT / 8];
+/* Native FB after rotation: 128 columns x 8 pages. */
+static uint8_t s_native[PHYS_W * PHYS_H / 8];
 
-/* 5x7 ASCII font, MSB = top row. */
-static const uint8_t font5x7[][6] = {   /* [0] = char, [1..5] = 5 columns */
-    {' ',0,0,0,0},{'!',0x00,0x00,0x5F,0x00,0x00},{'"',0x00,0x07,0x00,0x07,0x00},
+/* 5x7 font: [0]=char, [1..5]=columns, bit0=top. */
+static const uint8_t font5x7[][6] = {
+    {' ',0,0,0,0,0},{'!',0x00,0x00,0x5F,0x00,0x00},{'"',0x00,0x07,0x00,0x07,0x00},
     {'#',0x14,0x7F,0x14,0x7F,0x14},{'$',0x24,0x2A,0x7F,0x2A,0x12},{'%',0x23,0x13,0x08,0x64,0x62},
     {'&',0x36,0x49,0x55,0x22,0x50},{'\'',0x00,0x05,0x03,0x00,0x00},{'(',0x00,0x1C,0x22,0x41,0x00},
     {')',0x00,0x41,0x22,0x1C,0x00},{'*',0x14,0x08,0x3E,0x08,0x14},{'+',0x08,0x08,0x3E,0x08,0x08},
@@ -51,7 +56,13 @@ static const uint8_t font5x7[][6] = {   /* [0] = char, [1..5] = 5 columns */
     {'_',0x40,0x40,0x40,0x40,0x40},
 };
 
-/* Large digits are the 5x7 glyphs scaled 2x (see oled_big_text) - no big LUT. */
+static const uint8_t *glyph(uint8_t c)
+{
+    for (unsigned i = 0; i < sizeof(font5x7)/sizeof(font5x7[0]); i++) {
+        if (font5x7[i][0] == c) return font5x7[i] + 1;
+    }
+    return NULL;
+}
 
 void oled_clear(void) { memset(s_fb, 0, sizeof(s_fb)); }
 
@@ -74,49 +85,66 @@ int oled_text(int x, int y, const char *str, bool on)
 {
     int cx = x;
     for (const char *p = str; *p; p++) {
-        uint8_t c = (uint8_t)*p;
-        const uint8_t *g = NULL;
-        for (unsigned i = 0; i < sizeof(font5x7)/sizeof(font5x7[0]); i++) {
-            if (font5x7[i][0] == c) { g = font5x7[i] + 1; break; }
-        }
-        (void)g;
+        const uint8_t *g = glyph((uint8_t)*p);
         if (!g) { cx += 6; continue; }
-        for (int col = 0; col < 5; col++) {
-            for (int row = 0; row < 7; row++) {
+        for (int col = 0; col < 5; col++)
+            for (int row = 0; row < 7; row++)
                 if (g[col] & (1 << row)) oled_pixel(cx + col, y + row, on);
-            }
-        }
         cx += 6;
     }
     return cx;
 }
 
-/* 5x7 glyph scaled 2x -> 10x14, used for the large weight digits. */
+/* Крупные цифры 5x7 * 3 = 15x21, шаг 18. Точка и минус - отдельно. */
 int oled_big_text(int x, int y, const char *str, bool on)
 {
     int cx = x;
     for (const char *p = str; *p; p++) {
         uint8_t c = (uint8_t)*p;
-        const uint8_t *g = NULL;
-        if (c >= '0' && c <= '9') {
-            g = font5x7[(c - '0') + 16] + 1;  /* '0' is at index 16 */
+        if (c == '.') {
+            oled_fill_rect(cx + 6, y + 18, 3, 3, on);
+            cx += 12;
+            continue;
         }
-        if (!g) { cx += 12; continue; }
-        for (int col = 0; col < 5; col++) {
-            for (int row = 0; row < 7; row++) {
-                if (g[col] & (1 << row)) {
-                    oled_fill_rect(cx + col*2, y + row*2, 2, 2, on);
-                }
-            }
+        if (c == '-') {
+            oled_fill_rect(cx + 3, y + 9, 9, 3, on);
+            cx += 15;
+            continue;
         }
-        cx += 12;
+        const uint8_t *g = (c >= '0' && c <= '9') ? glyph(c) : NULL;
+        if (!g) { cx += 18; continue; }
+        for (int col = 0; col < 5; col++)
+            for (int row = 0; row < 7; row++)
+                if (g[col] & (1 << row))
+                    oled_fill_rect(cx + col*3, y + row*3, 3, 3, on);
+        cx += 18;
     }
     return cx;
 }
 
+/* Настоящий поворот на 90 градусов (не отражение!).
+ * Логическая точка (x,y) -> физическая (col,row):
+ *   CW :  col = 127 - y, row = x
+ *   CCW:  col = y,       row = 63 - x
+ */
 esp_err_t oled_flush(void)
 {
-    return esp_lcd_panel_draw_bitmap(s_panel, 0, 0, OLED_WIDTH, OLED_HEIGHT, s_fb);
+    memset(s_native, 0, sizeof(s_native));
+    for (int y = 0; y < OLED_HEIGHT; y++) {
+        for (int x = 0; x < OLED_WIDTH; x++) {
+            if (!(s_fb[x + (y >> 3) * OLED_WIDTH] & (1 << (y & 7)))) continue;
+#if OLED_ROTATE_CW
+            int col = PHYS_W - 1 - y;   /* 0..127 */
+            int row = x;                /* 0..63  */
+#else
+            int col = y;                /* 0..127 */
+            int row = PHYS_H - 1 - x;   /* 0..63  */
+#endif
+            if (col < 0 || col >= PHYS_W || row < 0 || row >= PHYS_H) continue;
+            s_native[col + (row >> 3) * PHYS_W] |= (1 << (row & 7));
+        }
+    }
+    return esp_lcd_panel_draw_bitmap(s_panel, 0, 0, PHYS_W, PHYS_H, s_native);
 }
 
 esp_err_t ssd1306_init(void)
@@ -145,7 +173,7 @@ esp_err_t ssd1306_init(void)
     err = esp_lcd_new_panel_io_i2c(bus, &io_cfg, &io);
     if (err != ESP_OK) { ESP_LOGE(TAG, "panel io: %s", esp_err_to_name(err)); return err; }
 
-    esp_lcd_panel_ssd1306_config_t ssd_cfg = { .height = OLED_HEIGHT };
+    esp_lcd_panel_ssd1306_config_t ssd_cfg = { .height = PHYS_H };
     esp_lcd_panel_dev_config_t panel_cfg = {
         .bits_per_pixel = 1,
         .reset_gpio_num = -1,
@@ -161,7 +189,7 @@ esp_err_t ssd1306_init(void)
 
     oled_clear();
     oled_flush();
-    ESP_LOGI(TAG, "SSD1306 ready, %dx%d over I2C (SDA %d, SCL %d)",
-             OLED_WIDTH, OLED_HEIGHT, OLED_PIN_SDA, OLED_PIN_SCL);
+    ESP_LOGI(TAG, "SSD1306 ready, PORTRAIT %dx%d (rotated to 128x64)",
+             OLED_WIDTH, OLED_HEIGHT);
     return ESP_OK;
 }
