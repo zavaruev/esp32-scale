@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "driver/gpio.h"
 #include "credentials.h"
 #include "index_html.h"
 #include "esp_event.h"
@@ -598,14 +599,23 @@ static esp_err_t api_azt(httpd_req_t *req)
 static esp_err_t api_buttons(httpd_req_t *req)
 {
     uint8_t mask = buttons_state();
-    char buf[64];
+    /* Raw levels of the five ribbon GPIOs, read while idle (rows are inputs
+     * between scans). Columns should read 1 (pull-ups) when nothing is pressed. */
+    int g6 = gpio_get_level(GPIO_NUM_6);
+    int g7 = gpio_get_level(GPIO_NUM_7);
+    int g8 = gpio_get_level(GPIO_NUM_8);
+    int g9 = gpio_get_level(GPIO_NUM_9);
+    int g13 = gpio_get_level(GPIO_NUM_13);
+    char buf[128];
     int n = snprintf(buf, sizeof(buf),
                      "{\"mask\":%u,\"ED\":%u,\"SUM\":%u,\"ZERO\":%u,"
-                     "\"T\":%u,\"ITT\":%u,\"SBR\":%u}",
+                     "\"T\":%u,\"ITT\":%u,\"SBR\":%u,"
+                     "\"gpio\":[%d,%d,%d,%d,%d]}",
                      (unsigned)mask,
                      (unsigned)((mask >> 0) & 1), (unsigned)((mask >> 1) & 1),
                      (unsigned)((mask >> 2) & 1), (unsigned)((mask >> 3) & 1),
-                     (unsigned)((mask >> 4) & 1), (unsigned)((mask >> 5) & 1));
+                     (unsigned)((mask >> 4) & 1), (unsigned)((mask >> 5) & 1),
+                     g6, g7, g8, g9, g13);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, buf, n);
     return ESP_OK;

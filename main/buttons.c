@@ -14,6 +14,7 @@
 #include "esp_log.h"
 #include "esp_rom_sys.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 #include "buttons.h"
@@ -53,6 +54,9 @@ static const char *const s_names[BTN_COUNT] = {
 };
 
 static button_handler_t s_handler;
+/* Guards the row GPIOs: the scanner drives them, a raw diagnostic read must not
+ * race it. Initialised lazily in buttons_init(). */
+static SemaphoreHandle_t s_bus_lock;
 
 /* Debounced state published by the scanning task, read by /api/buttons.
  * Reading the raw GPIO from HTTP would race the scanner on the same row pins. */
@@ -96,7 +100,9 @@ static bool scan_key(gpio_num_t row, gpio_num_t col)
 {
     gpio_set_direction(row, GPIO_MODE_OUTPUT);
     gpio_set_level(row, 0);
-    esp_rom_delay_us(10);
+    /* Long enough for the membrane/flat-cable line to settle. 10 us was too
+     * short and the column could still read its previous level. */
+    esp_rom_delay_us(100);
     bool pressed = (gpio_get_level(col) == 0);
     /* Floating again BEFORE the next row is driven. */
     gpio_set_direction(row, GPIO_MODE_INPUT);
@@ -107,6 +113,7 @@ static void buttons_task(void *arg)
 {
     (void)arg;
     while (1) {
+        xSemaphoreTake(s_bus_lock, portMAX_DELAY);
         for (int i = 0; i < BTN_COUNT; i++) {
             bool raw = scan_key(s_keys[i].row, s_keys[i].col);
 
@@ -149,6 +156,7 @@ static void buttons_task(void *arg)
                 }
             }
         }
+        xSemaphoreGive(s_bus_lock);
         vTaskDelay(pdMS_TO_TICKS(SCAN_PERIOD_MS));
     }
 }
@@ -156,8 +164,10 @@ static void buttons_task(void *arg)
 esp_err_t buttons_init(button_handler_t handler)
 {
     s_handler = handler;
+    s_bus_lock = xSemaphoreCreateMutex();
     configure_gpio();
     memset(s_state, 0, sizeof(s_state));
+    s_settled_mask = 0;
 
     BaseType_t ok = xTaskCreatePinnedToCore(buttons_task, "buttons", TASK_STACK,
                                              NULL, TASK_PRIORITY, NULL, TASK_CORE);
@@ -180,7 +190,16 @@ void buttons_dump(void)
 
 uint8_t buttons_state(void)
 {
-    /* Return the scanner's debounced snapshot, never touch the row GPIOs here:
-     * doing so from the HTTP task races the scanner and breaks detection. */
-    return s_settled_mask;
+    /* Live scan under the same mutex the scanner uses. This is a diagnostic:
+     * it reports the actual raw matrix, so a stuck key shows up immediately. */
+    uint8_t live = 0;
+    if (s_bus_lock && xSemaphoreTake(s_bus_lock, pdMS_TO_TICKS(50)) == pdTRUE) {
+        for (int i = 0; i < BTN_COUNT; i++) {
+            if (scan_key(s_keys[i].row, s_keys[i].col)) {
+                live |= (1 << i);
+            }
+        }
+        xSemaphoreGive(s_bus_lock);
+    }
+    return live;
 }
