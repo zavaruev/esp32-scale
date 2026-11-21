@@ -69,9 +69,9 @@ static void draw_screen(const scale_snapshot_t *s)
     double shown = s->zero ? 0.0 : hold_or_show(s->avg_grams, s->stable);
     shown /= per;
 
-    /* Two layouts, both with the unit UNDER the number:
-     *   < 1 kg : big "1250"  + small "g"
-     *   >=1 kg : big "1 kg"  + small "250 g"
+    /* Two layouts, unit always on its OWN line under the number:
+     *   < 1 kg : big number / "g"
+     *   >=1 kg : big "N" / "kg" / big remainder / "g"
      * All strings are width-checked against OLED_WIDTH (64 px). */
     char line1[24], line2[24];
     bool over_kg = (s->unit == UNIT_GRAM) ? (shown >= 1000.0) :
@@ -85,18 +85,22 @@ static void draw_screen(const scale_snapshot_t *s)
         int rem = (int)(grams_total - kg * 1000.0 + 0.5);
         if (rem >= 1000) { kg++; rem -= 1000; }
         snprintf(line1, sizeof(line1), "%d", kg);
-        snprintf(line2, sizeof(line2), "%d g", rem);
-        /* Top line is "N kg": big digits + small unit to the right. */
-        int w1 = (int)strlen(line1) * 18;
-        int x1 = (OLED_WIDTH - w1 - 16) / 2;
-        if (x1 < 0) x1 = 0;
-        oled_big_text(x1, 22, line1, true);
-        oled_text(x1 + w1 + 3, 30, "kg", true);
-        /* Second line, grams, small but clearly readable. */
-        int w2 = (int)strlen(line2) * 6;
-        int x2 = (OLED_WIDTH - w2) / 2;
-        if (x2 < 0) x2 = 0;
-        oled_text(x2, 56, line2, true);
+        snprintf(line2, sizeof(line2), "%d", rem);
+
+        /* Line 1: big kilograms. */
+        int wkg = (int)strlen(line1) * 18;
+        int xkg = (OLED_WIDTH - wkg) / 2;
+        if (xkg < 0) xkg = 0;
+        oled_big_text(xkg, 14, line1, true);
+        /* Line 2: "kg". */
+        oled_text((OLED_WIDTH - 12) / 2, 38, "kg", true);
+        /* Line 3: big grams remainder. */
+        int wg = (int)strlen(line2) * 18;
+        int xg = (OLED_WIDTH - wg) / 2;
+        if (xg < 0) xg = 0;
+        oled_big_text(xg, 52, line2, true);
+        /* Line 4: "g". */
+        oled_text((OLED_WIDTH - 6) / 2, 76, "g", true);
     } else {
         /* Under 1 kg: show grams (or selected unit) as an integer.
          * Up to 3 digits fit in BIG (3*18=54 px). 4+ digits fall back to the
@@ -123,9 +127,14 @@ static void draw_screen(const scale_snapshot_t *s)
 
     /* When the reading has settled, show a check mark next to the unit. */
     if (s_locked) {
-        int uw = (int)strlen(unit) * 6;
-        int ux = (OLED_WIDTH - uw) / 2;
-        draw_check(ux + uw + 3, 50, true);
+        if (over_kg) {
+            /* next to the "g" line (y=76), or next to "kg" if you prefer */
+            draw_check((OLED_WIDTH - 6) / 2 + 8, 76, true);
+        } else {
+            int uw = (int)strlen(unit) * 6;
+            int ux = (OLED_WIDTH - uw) / 2;
+            draw_check(ux + uw + 3, 50, true);
+        }
     }
 
     /* Status flags at the bottom. */
