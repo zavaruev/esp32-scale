@@ -37,15 +37,6 @@ static bool s_was_locked;   /* to beep once on the rising edge of HOLD */
 static bool s_was_overload; /* to beep once when overload appears */
 static bool s_overload;     /* current state, set during draw_screen */
 
-/* A small check mark drawn with two strokes, width ~9 px. */
-static void draw_check(int x, int y, bool on)
-{
-    /* short stroke down-right */
-    for (int i = 0; i < 4; i++) oled_fill_rect(x + i, y + 4 + i, 2, 2, on);
-    /* long stroke up-right */
-    for (int i = 0; i < 7; i++) oled_fill_rect(x + 3 + i, y + 7 - i, 2, 2, on);
-}
-
 static double hold_or_show(double grams, bool stable)
 {
     if (!s_candidate_valid) { s_candidate = grams; s_candidate_valid = true; }
@@ -146,18 +137,6 @@ static void draw_screen(const scale_snapshot_t *s)
         /* Unit under the number — BIG so it is seen through the window. */
         int uw = (int)strlen(unit) * 18;
         oled_big_text((OLED_WIDTH - uw)/2, 50, unit, true);
-    }
-
-    /* When the reading has settled, show a check mark next to the unit. */
-    if (s_locked) {
-        if (over_kg) {
-            /* next to the big "g" line */
-            draw_check((OLED_WIDTH - 18) / 2 + 20, 84, true);
-        } else {
-            int uw = (int)strlen(unit) * 18;
-            int ux = (OLED_WIDTH - uw) / 2;
-            draw_check(ux + uw + 2, 52, true);
-        }
     }
 
     /* Status flags at the bottom. */
