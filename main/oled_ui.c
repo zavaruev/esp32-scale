@@ -25,11 +25,17 @@ static const char *TAG = "oled_ui";
 
 #define UI_PERIOD_MS 150
 
+/* Load cell is rated 6 kg. Above this the reading is not trustworthy, so show
+ * a clear OVER indicator instead of a plausible-looking number. */
+#define OVERLOAD_GRAMS 6000.0f
+
 static bool s_locked;
 static double s_locked_value, s_candidate;
 static int s_quiet;
 static bool s_candidate_valid;
 static bool s_was_locked;   /* to beep once on the rising edge of HOLD */
+static bool s_was_overload; /* to beep once when overload appears */
+static bool s_overload;     /* current state, set during draw_screen */
 
 /* A small check mark drawn with two strokes, width ~9 px. */
 static void draw_check(int x, int y, bool on)
@@ -59,6 +65,7 @@ static double hold_or_show(double grams, bool stable)
 static void draw_screen(const scale_snapshot_t *s)
 {
     oled_clear();
+    s_overload = false;
 
     const char *unit = (s->unit == UNIT_KILOGRAM) ? "kg" :
                        (s->unit == UNIT_OUNCE) ? "oz" : "g";
@@ -68,6 +75,20 @@ static void draw_screen(const scale_snapshot_t *s)
 
     double shown = s->zero ? 0.0 : hold_or_show(s->avg_grams, s->stable);
     shown /= per;
+
+    /* Overload: the value is beyond the 6 kg cell range. Show a clear warning
+     * instead of a number that looks valid. Compare in grams regardless of the
+     * selected display unit. */
+    double shown_grams = shown * per;
+    if (!s->zero && shown_grams >= OVERLOAD_GRAMS) {
+        s_overload = true;
+        oled_text((OLED_WIDTH - 24) / 2, 26, "OVER", true);
+        oled_text((OLED_WIDTH - 24) / 2, 50, "LOAD", true);
+        /* A warning triangle-ish mark: filled bar + exclamation. */
+        oled_fill_rect(22, 76, 20, 2, true);
+        oled_text((OLED_WIDTH - 6) / 2, 82, "!", true);
+        return;   /* skip the normal weight layout */
+    }
 
     /* Two layouts, unit always on its OWN line under the number:
      *   < 1 kg : big number / "g"
@@ -153,9 +174,16 @@ static void oled_ui_task(void *arg)
         scale_snapshot_t s;
         weight_task_get(&s);
         draw_screen(&s);
-        /* One short beep when the weight first settles. Skip the zero case:
-         * an empty platform locks instantly and would beep on every tare. */
-        if (s_locked && !s_was_locked && !s.zero) {
+        /* Warning beep the moment the reading goes over the 6 kg limit. */
+        if (s_overload && !s_was_overload) {
+            audio_play(AUDIO_ERROR);
+        }
+        s_was_overload = s_overload;
+
+        /* One short beep when the weight first settles. Skip the zero case and
+         * overload: an empty platform locks instantly, and an overloaded one is
+         * already covered by the warning. */
+        if (s_locked && !s_was_locked && !s.zero && !s_overload) {
             audio_play(AUDIO_STABLE);
         }
         s_was_locked = s_locked;
