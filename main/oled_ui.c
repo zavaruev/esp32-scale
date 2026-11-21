@@ -115,15 +115,15 @@ static void draw_screen(const scale_snapshot_t *s)
         draw_small(62, "g");
     }
 
-    /* Status chips along the bottom, small bold 5x7, names matching the web
-     * page badges: STABLE, ZERO, TARE, AVG, HOLD. */
+    /* Status icons along the bottom right, one per short line. Full names
+     * as in the web page badges: STABLE, ZERO, TARE, AVG, HOLD. */
     {
-        int cx = 0, cy = 90;
-        if (s->stable)      cx = oled_text_bold(cx, cy, "STABLE") + 2;
-        if (s->zero)        cx = oled_text_bold(cx, cy, "ZERO") + 2;
-        if (s->tare_active) cx = oled_text_bold(cx, cy, "TARE") + 2;
-        if (s->avg_n >= 45) cx = oled_text_bold(cx, cy, "AVG") + 2;
-        if (s_locked)       cx = oled_text_bold(cx, cy, "HOLD");
+        int cy = 84;
+        if (s->stable)      { oled_text(28, cy, "STABLE", true); cy += 8; }
+        if (s->zero)        { oled_text(28, cy, "ZERO",  true); cy += 8; }
+        if (s->tare_active) { oled_text(28, cy, "TARE",  true); cy += 8; }
+        if (s->avg_n >= 45) { oled_text(28, cy, "AVG",   true); cy += 8; }
+        if (s_locked)       { oled_text(28, cy, "HOLD",  true); cy += 8; }
     }
 }
 
