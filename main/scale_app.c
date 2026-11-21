@@ -31,8 +31,8 @@
 #include "hx711.h"
 #include "ota.h"
 #include "scale_filter.h"
-#include "st7789.h"
-#include "ui.h"
+#include "oled_ui.h"
+#include "ssd1306.h"
 #include "web_server.h"
 #include "weight_task.h"
 
@@ -252,12 +252,10 @@ static void on_button(button_id_t id, button_press_t press)
             audio_play(AUDIO_TARE);
             break;
         case BTN_ITT:
-            /* HOLD is computed by the UI task; show the weighing screen. */
-            ui_show_page(UI_PAGE_WEIGH);
+            /* HOLD is computed in the OLED UI; nothing to switch here. */
             break;
         case BTN_SUM:
         case BTN_SBR:
-            ui_show_page(UI_PAGE_WEIGH);
             break;
         default:
             break;
@@ -275,13 +273,11 @@ static void on_button(button_id_t id, button_press_t press)
         break;
     }
     case BTN_SUM: {
-        ui_show_page(UI_PAGE_CAL);
         audio_play(AUDIO_CAL_START);
         weight_task_cal_start(weight_task_get_ref_mass());
         break;
     }
     case BTN_SBR:
-        ui_show_page(UI_PAGE_WEIGH);
         break;
     default:
         break;
@@ -298,32 +294,6 @@ static void print_constants(void)
     fflush(stdout);
 }
 
-/* Bring up the display only after the rest of the system has settled.
- *
- * On cold start the 3.3 V rail is loaded all at once by WiFi, the HX711, the
- * backlight and the panel. Initialising an ST7789 in that window is the most
- * likely reason the previous module came up fine and then went black after a
- * few minutes. Delaying by 3 s lets the regulator and PSRAM timing settle. */
-static void display_init_task(void *arg)
-{
-    (void)arg;
-    vTaskDelay(pdMS_TO_TICKS(3000));
-
-    esp_lcd_panel_io_handle_t lcd_io = NULL;
-    esp_lcd_panel_handle_t lcd_panel = NULL;
-    esp_err_t err = st7789_init(&lcd_io, &lcd_panel);
-    if (err != ESP_OK) {
-        ESP_LOGE("app", "delayed display init failed: %s", esp_err_to_name(err));
-        vTaskDelete(NULL);
-        return;
-    }
-    err = ui_init(lcd_io, lcd_panel);
-    if (err != ESP_OK) {
-        ESP_LOGE("app", "delayed UI init failed: %s", esp_err_to_name(err));
-    }
-    vTaskDelete(NULL);
-}
-
 void app_main(void)
 {
     vTaskDelay(pdMS_TO_TICKS(1500));
@@ -337,13 +307,13 @@ void app_main(void)
     ESP_ERROR_CHECK(net_start());
     wifi_start_ap_fallback();
 
-    /* Display + UI come up in their own task after 3 s (see above). Audio and
-     * buttons start immediately - they do not depend on the panel. */
-    xTaskCreatePinnedToCore(display_init_task, "disp_init", 4096, NULL, 5, NULL, 1);
+    /* OLED display + UI. Audio and buttons start too. */
+    ESP_ERROR_CHECK(ssd1306_init());
+    ESP_ERROR_CHECK(oled_ui_init());
     ESP_ERROR_CHECK(audio_init());
     ESP_ERROR_CHECK(buttons_init(on_button));
 
-    printf("#READY commands: c | t | d [min] | m [grams] | w | R(raw log) | x 0|1 (wifi) | s(scan) | h(selftest) | a 0..2 | p 0..1 | k <password> | b <MAC> | T <dBm> | A <0..7>(audio) | F <g>(ref mass) | Z(buttons) | Y 0|1(backlight)\n");
+    printf("#READY commands: c | t | d [min] | m [grams] | w | R(raw log) | x 0|1 (wifi) | s(scan) | h(selftest) | a 0..2 | p 0..1 | k <password> | b <MAC> | T <dBm> | A <0..7>(audio) | F <g>(ref mass) | Z(buttons)\n");
     fflush(stdout);
 
     char line[64];
@@ -409,10 +379,6 @@ void app_main(void)
                     break;
                 }
                 case 'Z': buttons_dump(); break;
-                case 'Y':
-                    st7789_backlight(num > 0);
-                    printf("#BACKLIGHT,%d\n", num > 0);
-                    break;
                 case 'x':
                     wifi_suspend(num > 0);   /* x 1 = radio off, x 0 = radio on */
                     fflush(stdout);

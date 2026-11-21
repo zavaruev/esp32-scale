@@ -88,16 +88,3 @@ CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
 CONFIG_LWIP_SO_RCVBUF=y
 
-# LVGL must use the FreeRTOS port. With LV_OS_NONE the esp_lvgl_port task calls
-# lv_timer_handler() but LVGL's own OS abstraction has no mutex/timer support,
-# so the refresh timer never fires and the panel shows uninitialised RAM noise.
-CONFIG_LV_OS_FREERTOS=y
-# CONFIG_LV_OS_NONE is not set
-
-# LVGL fonts used by main/ui.c. The Montserrat faces are compiled into flash;
-# only the sizes actually referenced are enabled to keep the image small.
-CONFIG_LV_FONT_MONTSERRAT_14=y
-CONFIG_LV_FONT_MONTSERRAT_16=y
-CONFIG_LV_FONT_MONTSERRAT_28=y
-CONFIG_LV_FONT_MONTSERRAT_48=y
-CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y

@@ -1,5 +1,0 @@
-dependencies:
-  # LVGL 9 and Espressif's port are already in the local component cache on this
-  # machine. Pin the versions so a rebuild stays reproducible.
-  lvgl/lvgl: "9.5.0"
-  espressif/esp_lvgl_port: "2.9.0"

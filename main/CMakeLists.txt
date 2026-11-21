@@ -30,17 +30,16 @@ idf_component_register(
          "web_server.c"
          "ota.c"
          "hx711.c"
-         "st7789.c"
+         "ssd1306.c"
+         "oled_ui.c"
          "buttons.c"
          "audio.c"
-         "ui.c"
          "${WEB_HEADER}"
     INCLUDE_DIRS "."
     REQUIRES esp_driver_gpio
              esp_driver_spi
+             esp_driver_i2c
              esp_lcd
-             esp_lvgl_port
-             lvgl
              esp_timer
              nvs_flash
              esp_wifi
