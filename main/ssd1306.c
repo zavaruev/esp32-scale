@@ -103,6 +103,26 @@ int oled_text(int x, int y, const char *str, bool on)
 }
 
 /* Крупные цифры 5x7 * 3 = 15x21, шаг 18. Точка и минус - отдельно. */
+/* Bold small text: same glyphs with +1 px strokes and pitch 7 instead of 6,
+ * so the labels look a little bigger. */
+int oled_text_bold(int x, int y, const char *str)
+{
+    int cx = x;
+    for (const char *p = str; *p; p++) {
+        const uint8_t *g = glyph((uint8_t)*p);
+        if (!g) { cx += 7; continue; }
+        for (int col = 0; col < 5; col++)
+            for (int row = 0; row < 7; row++)
+                if (g[col] & (1 << row)) {
+                    oled_pixel(cx + col,     y + row,     true);
+                    oled_pixel(cx + col + 1, y + row,     true);
+                    oled_pixel(cx + col,     y + row + 1, true);
+                }
+        cx += 7;
+    }
+    return cx;
+}
+
 int oled_big_text(int x, int y, const char *str, bool on)
 {
     int cx = x;

@@ -27,6 +27,8 @@ void oled_clear(void);
 void oled_pixel(int x, int y, bool on);
 void oled_fill_rect(int x, int y, int w, int h, bool on);
 int  oled_text(int x, int y, const char *str, bool on);
+/* Bold variant of oled_text - strokes +1 px, pitch 7: labels look a bit bigger. */
+int  oled_text_bold(int x, int y, const char *str);
 /* Крупные цифры: 5x7, масштаб 3x = 15x21 px, шаг 18. */
 int  oled_big_text(int x, int y, const char *str, bool on);
 /* 7-сегментные цифры 11x21, шаг 13 — компактнее и всегда влезают. */

@@ -78,11 +78,11 @@ static void draw_screen(const scale_snapshot_t *s)
     /* Helper: draw a string with the BIG font (5x7 x 2). Fit to width by
      * choosing scale 3 (3 digits, 54 px) or 2 (4 digits, 48 px). */
     char buf[24];
-    /* Small 5x7 line centered on the screen. */
+    /* Bold small label: slightly bigger than the plain 5x7, pitch 7. */
     int draw_small(int y, const char *txt)
     {
-        int w = (int)strlen(txt) * 6;
-        oled_text((OLED_WIDTH - w) / 2, y, txt, true);
+        int w = (int)strlen(txt) * 7;
+        oled_text_bold((OLED_WIDTH - w) / 2, y, txt);
         return 0;
     }
     /* Big 5x7x3 line centered on the screen. */
@@ -94,24 +94,25 @@ static void draw_screen(const scale_snapshot_t *s)
         return 0;
     }
 
+    /* Screen is 128 rows: labels sit in the bottom lines, like the old
+     * design where they were drawn at the bottom of the panel. */
     if (grams_now < 1000.0) {
-        /* < 1 kg: big value, then "g" small below it. */
+        /* < 1 kg: big value, "g" label at the bottom. */
         snprintf(buf, sizeof(buf), "%d", (int)(grams_now + 0.5));
         draw_big(2, buf);
-        draw_small(26, "g");
+        draw_small(80, "g");
     } else {
-        /* >= 1 kg: big kg value, small "kg", big g value, small "g" at the
-         * very bottom of the screen (rows fit 0..63). Slightly larger gaps
-         * than the previous layout. */
+        /* >= 1 kg: big kg value, big grams value, then the "kg" and "g"
+         * labels in the bottom lines. */
         int kg = (int)(grams_now / 1000.0);
         int rem = (int)(grams_now - kg * 1000.0 + 0.5);
         if (rem >= 1000) { kg++; rem -= 1000; }
         snprintf(buf, sizeof(buf), "%d", kg);
         draw_big(2, buf);
-        draw_small(26, "kg");
         snprintf(buf, sizeof(buf), "%d", rem);
         draw_big(36, buf);
-        draw_small(58, "g");
+        draw_small(62, "kg");
+        draw_small(80, "g");
     }
 }
 
