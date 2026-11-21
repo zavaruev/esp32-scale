@@ -97,11 +97,12 @@ static void draw_screen(const scale_snapshot_t *s)
     if (grams_now < 1000.0) {
         /* < 1 kg: big value, then "g" small below it. */
         snprintf(buf, sizeof(buf), "%d", (int)(grams_now + 0.5));
-        draw_big(20, buf);
-        draw_small(44, "g");
+        draw_big(2, buf);
+        draw_small(26, "g");
     } else {
-        /* >= 1 kg: big kg value, small "kg", big g value, small "g"
-         * Stacked so everything fits rows 0..63. */
+        /* >= 1 kg: big kg value, small "kg", big g value, small "g" at the
+         * very bottom of the screen (rows fit 0..63). Slightly larger gaps
+         * than the previous layout. */
         int kg = (int)(grams_now / 1000.0);
         int rem = (int)(grams_now - kg * 1000.0 + 0.5);
         if (rem >= 1000) { kg++; rem -= 1000; }
@@ -110,7 +111,7 @@ static void draw_screen(const scale_snapshot_t *s)
         draw_small(26, "kg");
         snprintf(buf, sizeof(buf), "%d", rem);
         draw_big(36, buf);
-        draw_small(56, "g");
+        draw_small(58, "g");
     }
 }
 
