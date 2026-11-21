@@ -126,6 +126,65 @@ int oled_big_text(int x, int y, const char *str, bool on)
     return cx;
 }
 
+/* 7-segment digit, 11 wide x 21 tall. Segments (a..g) drawn as rectangles:
+ *    aaa
+ *   f   b
+ *   f   b
+ *    ggg
+ *   e   c
+ *   e   c
+ *    ddd
+ * Bit mask: bit0=a,1=b,2=c,3=d,4=e,5=f,6=g. */
+static const uint8_t seg_map[10] = {
+    0x3F, /* 0 */
+    0x06, /* 1 */
+    0x5B, /* 2 */
+    0x4F, /* 3 */
+    0x66, /* 4 */
+    0x6D, /* 5 */
+    0x7D, /* 6 */
+    0x07, /* 7 */
+    0x7F, /* 8 */
+    0x6F, /* 9 */
+};
+
+/* Draw one 7-seg digit at (x,y). Width 11, height 21. */
+static void oled_digit(int x, int y, int d, bool on)
+{
+    if (d < 0 || d > 9) return;
+    uint8_t s = seg_map[d];
+    /* horizontal strokes: 9 px wide, 3 px tall */
+    if (s & 0x01) oled_fill_rect(x + 1, y + 0,  9, 3, on);      /* a */
+    if (s & 0x08) oled_fill_rect(x + 1, y + 9,  9, 3, on);      /* g */
+    if (s & 0x10) oled_fill_rect(x + 1, y + 18, 9, 3, on);      /* d */
+    /* vertical strokes: 3 px wide, 9 px tall */
+    if (s & 0x02) oled_fill_rect(x + 8, y + 1,  3, 9, on);      /* b */
+    if (s & 0x04) oled_fill_rect(x + 8, y + 11, 3, 9, on);      /* c */
+    if (s & 0x20) oled_fill_rect(x + 0, y + 1,  3, 9, on);      /* f */
+    if (s & 0x40) oled_fill_rect(x + 0, y + 11, 3, 9, on);      /* e */
+}
+
+/* Draw a number with 7-seg digits, step 13 px. Returns width used.
+ * Digits only; '.' and '-' handled by the caller. */
+int oled_7seg(int x, int y, const char *str, bool on)
+{
+    int cx = x;
+    for (const char *p = str; *p; p++) {
+        char c = *p;
+        if (c >= '0' && c <= '9') {
+            oled_digit(cx, y, c - '0', on);
+            cx += 13;
+        } else if (c == '.') {
+            oled_fill_rect(cx + 4, y + 18, 3, 3, on);
+            cx += 5;
+        } else if (c == '-') {
+            oled_fill_rect(cx + 2, y + 9, 7, 3, on);
+            cx += 11;
+        }
+    }
+    return cx - x;
+}
+
 /* Настоящий поворот на 90 градусов (не отражение!).
  * Логическая точка (x,y) -> физическая (col,row):
  *   CW :  col = 127 - y, row = x

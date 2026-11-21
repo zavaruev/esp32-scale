@@ -67,34 +67,41 @@ static void draw_screen(const scale_snapshot_t *s)
     double shown = s->zero ? 0.0 : hold_or_show(s->avg_grams, s->stable);
     shown /= per;
 
-    /* Minimum, readable layout: one big value and its unit underneath.
-     * Nothing else - small status text is unreadable through the window. */
     double grams_now = shown * per;      /* grams, regardless of selected unit */
 
     if (!s->zero && grams_now >= OVERLOAD_GRAMS) {
-        /* Overload: one big word, no extra decorations. */
         s_overload = true;
-        oled_big_text((OLED_WIDTH - 4 * 18) / 2, 50, "OVER", true);
+        oled_text((OLED_WIDTH - 24) / 2, 50, "OVER", true);
         return;
     }
 
-    /* Format the value in the selected unit. */
-    char value[24];
-    if (s->unit == UNIT_GRAM) {
-        snprintf(value, sizeof(value), "%d", (int)(grams_now + 0.5));
-    } else if (s->unit == UNIT_KILOGRAM) {
-        snprintf(value, sizeof(value), "%.3f", shown);
+    /*.Width of a 7-seg string =sum(13 per digit, 5 for '.', 11 for '-'). */
+    /* Layout in the 64 px wide portrait window:
+     *   < 1 kg : big grams value / "g"
+     *   >=1 kg : big kg value / "kg" / big g remainder / "g"             */
+    char buf[24];
+
+    if (grams_now < 1000.0) {
+        int v = (int)(grams_now + 0.5);
+        snprintf(buf, sizeof(buf), "%d", v);
+        int w = 0;
+        for (char *p = buf; *p; p++) w += (*p == '.') ? 5 : 13;
+        oled_7seg((OLED_WIDTH - w) / 2, 40, buf, true);
+        oled_text((OLED_WIDTH - 6) / 2, 76, "g", true);
     } else {
-        snprintf(value, sizeof(value), "%.2f", shown);
+        int kg = (int)(grams_now / 1000.0);
+        int rem = (int)(grams_now - kg * 1000.0 + 0.5);
+        if (rem >= 1000) { kg++; rem -= 1000; }
+        snprintf(buf, sizeof(buf), "%d", kg);
+        int w1 = (int)strlen(buf) * 13;
+        oled_7seg((OLED_WIDTH - w1) / 2, 14, buf, true);
+        oled_text((OLED_WIDTH - 12) / 2, 40, "kg", true);
+
+        snprintf(buf, sizeof(buf), "%d", rem);
+        int w2 = (int)strlen(buf) * 13;
+        oled_7seg((OLED_WIDTH - w2) / 2, 56, buf, true);
+        oled_text((OLED_WIDTH - 6) / 2, 82, "g", true);
     }
-
-    int vw = (int)strlen(value) * 18;
-    int vx = (OLED_WIDTH - vw) / 2;
-    if (vx < 0) vx = 0;
-    oled_big_text(vx, 36, value, true);
-
-    int uw = (int)strlen(unit) * 18;
-    oled_big_text((OLED_WIDTH - uw) / 2, 76, unit, true);
 }
 
 static void oled_ui_task(void *arg)

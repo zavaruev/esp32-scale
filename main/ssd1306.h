@@ -29,6 +29,8 @@ void oled_fill_rect(int x, int y, int w, int h, bool on);
 int  oled_text(int x, int y, const char *str, bool on);
 /* Крупные цифры: 5x7, масштаб 3x = 15x21 px, шаг 18. */
 int  oled_big_text(int x, int y, const char *str, bool on);
+/* 7-сегментные цифры 11x21, шаг 13 — компактнее и всегда влезают. */
+int  oled_7seg(int x, int y, const char *str, bool on);
 esp_err_t oled_flush(void);
 
 #endif /* SSD1306_H */
