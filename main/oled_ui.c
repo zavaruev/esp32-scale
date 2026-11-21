@@ -67,85 +67,34 @@ static void draw_screen(const scale_snapshot_t *s)
     double shown = s->zero ? 0.0 : hold_or_show(s->avg_grams, s->stable);
     shown /= per;
 
-    /* Overload: the value is beyond the 6 kg cell range. Show a clear warning
-     * instead of a number that looks valid. Compare in grams regardless of the
-     * selected display unit. */
-    double shown_grams = shown * per;
-    if (!s->zero && shown_grams >= OVERLOAD_GRAMS) {
+    /* Minimum, readable layout: one big value and its unit underneath.
+     * Nothing else - small status text is unreadable through the window. */
+    double grams_now = shown * per;      /* grams, regardless of selected unit */
+
+    if (!s->zero && grams_now >= OVERLOAD_GRAMS) {
+        /* Overload: one big word, no extra decorations. */
         s_overload = true;
-        oled_text((OLED_WIDTH - 24) / 2, 26, "OVER", true);
-        oled_text((OLED_WIDTH - 24) / 2, 50, "LOAD", true);
-        /* A warning triangle-ish mark: filled bar + exclamation. */
-        oled_fill_rect(22, 76, 20, 2, true);
-        oled_text((OLED_WIDTH - 6) / 2, 82, "!", true);
-        return;   /* skip the normal weight layout */
+        oled_big_text((OLED_WIDTH - 4 * 18) / 2, 50, "OVER", true);
+        return;
     }
 
-    /* Two layouts, unit always on its OWN line under the number:
-     *   < 1 kg : big number / "g"
-     *   >=1 kg : big "N" / "kg" / big remainder / "g"
-     * All strings are width-checked against OLED_WIDTH (64 px). */
-    char line1[24], line2[24];
-    bool over_kg = (s->unit == UNIT_GRAM) ? (shown >= 1000.0) :
-                   (s->unit == UNIT_KILOGRAM) ? (shown >= 1.0) :
-                   (shown * 28.349523125 >= 1000.0);
-
-    if (over_kg) {
-        /* Work in kg + grams remainder regardless of selected unit. */
-        double grams_total = shown * per;
-        int kg = (int)(grams_total / 1000.0);
-        int rem = (int)(grams_total - kg * 1000.0 + 0.5);
-        if (rem >= 1000) { kg++; rem -= 1000; }
-        snprintf(line1, sizeof(line1), "%d", kg);
-        snprintf(line2, sizeof(line2), "%d", rem);
-
-        /* Line 1: big kilograms. */
-        int wkg = (int)strlen(line1) * 18;
-        int xkg = (OLED_WIDTH - wkg) / 2;
-        if (xkg < 0) xkg = 0;
-        oled_big_text(xkg, 14, line1, true);
-        /* Line 2: "kg" — BIG so it is visible through the window. */
-        int wku = 2 * 18;
-        oled_big_text((OLED_WIDTH - wku) / 2, 36, "kg", true);
-        /* Line 3: big grams remainder. */
-        int wg = (int)strlen(line2) * 18;
-        int xg = (OLED_WIDTH - wg) / 2;
-        if (xg < 0) xg = 0;
-        oled_big_text(xg, 58, line2, true);
-        /* Line 4: "g" — BIG. */
-        int wgu = 18;
-        oled_big_text((OLED_WIDTH - wgu) / 2, 82, "g", true);
+    /* Format the value in the selected unit. */
+    char value[24];
+    if (s->unit == UNIT_GRAM) {
+        snprintf(value, sizeof(value), "%d", (int)(grams_now + 0.5));
+    } else if (s->unit == UNIT_KILOGRAM) {
+        snprintf(value, sizeof(value), "%.3f", shown);
     } else {
-        /* Under 1 kg: show grams (or selected unit) as an integer.
-         * Up to 3 digits fit in BIG (3*18=54 px). 4+ digits fall back to the
-         * small font so nothing is clipped at 64 px wide. */
-        double v = shown * per;
-        snprintf(line1, sizeof(line1), "%d", (int)(v + 0.5));
-        int digits = (int)strlen(line1);
-        if (digits <= 3) {
-            int w1 = digits * 18;
-            int x1 = (OLED_WIDTH - w1) / 2;
-            if (x1 < 0) x1 = 0;
-            if (shown < 0) oled_text(1, 30, "-", true);
-            oled_big_text(x1, 22, line1, true);
-        } else {
-            int w1 = digits * 6;
-            int x1 = (OLED_WIDTH - w1) / 2;
-            if (x1 < 0) x1 = 0;
-            oled_text(x1, 30, line1, true);
-        }
-        /* Unit under the number — BIG so it is seen through the window. */
-        int uw = (int)strlen(unit) * 18;
-        oled_big_text((OLED_WIDTH - uw)/2, 50, unit, true);
+        snprintf(value, sizeof(value), "%.2f", shown);
     }
 
-    /* Status flags at the bottom. */
-    int bx = 2;
-    if (s->stable)      bx = oled_text(bx, 108, "STB ", true);
-    if (s->zero)        bx = oled_text(bx, 108, "ZER ", true);
-    if (s->tare_active) bx = oled_text(bx, 108, "TRE ", true);
-    if (s_locked)       bx = oled_text(bx, 108, "HLD", true);
-    oled_fill_rect(4, 104, OLED_WIDTH - 8, 1, true);
+    int vw = (int)strlen(value) * 18;
+    int vx = (OLED_WIDTH - vw) / 2;
+    if (vx < 0) vx = 0;
+    oled_big_text(vx, 36, value, true);
+
+    int uw = (int)strlen(unit) * 18;
+    oled_big_text((OLED_WIDTH - uw) / 2, 76, unit, true);
 }
 
 static void oled_ui_task(void *arg)

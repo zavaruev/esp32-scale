@@ -19,7 +19,7 @@
 
 /* Направление поворота: 0 = против часовой, 1 = по часовой.
  * Если буквы лягут на бок другой стороной — поменяйте на 1. */
-#define OLED_ROTATE_CW 0
+#define OLED_ROTATE_CW 1   /* the orientation the user confirmed as correct */
 
 esp_err_t ssd1306_init(void);
 
