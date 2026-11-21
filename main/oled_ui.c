@@ -78,36 +78,39 @@ static void draw_screen(const scale_snapshot_t *s)
     /* Helper: draw a string with the BIG font (5x7 x 2). Fit to width by
      * choosing scale 3 (3 digits, 54 px) or 2 (4 digits, 48 px). */
     char buf[24];
+    /* Small 5x7 line centered on the screen. */
+    int draw_small(int y, const char *txt)
+    {
+        int w = (int)strlen(txt) * 6;
+        oled_text((OLED_WIDTH - w) / 2, y, txt, true);
+        return 0;
+    }
+    /* Big 5x7x3 line centered on the screen. */
     int draw_big(int y, const char *txt)
     {
         int n = (int)strlen(txt);
-        if (n <= 3) {
-            int w = n * 18;
-            oled_big_text((OLED_WIDTH - w) / 2, y, txt, true);
-        } else {
-            int w = n * 12;
-            oled_text((OLED_WIDTH - w) / 2, y, txt, true);
-        }
+        int w = (n <= 3) ? n * 18 : n * 12;
+        oled_big_text((OLED_WIDTH - w) / 2, y, txt, true);
         return 0;
     }
 
     if (grams_now < 1000.0) {
-        /* < 1 kg: big value + small unit below. */
+        /* < 1 kg: big value, then "g" small below it. */
         snprintf(buf, sizeof(buf), "%d", (int)(grams_now + 0.5));
-        draw_big(36, buf);
-        oled_text((OLED_WIDTH - 12) / 2, 74, "g", true);
+        draw_big(20, buf);
+        draw_small(44, "g");
     } else {
-        /* >= 1 kg, three lines, per user spec:
-         *   big kg value / small "kg" / big gram remainder / small "g" */
+        /* >= 1 kg: big kg value, small "kg", big g value, small "g"
+         * Stacked so everything fits rows 0..63. */
         int kg = (int)(grams_now / 1000.0);
         int rem = (int)(grams_now - kg * 1000.0 + 0.5);
         if (rem >= 1000) { kg++; rem -= 1000; }
         snprintf(buf, sizeof(buf), "%d", kg);
-        draw_big(10, buf);
-        oled_text((OLED_WIDTH - 12) / 2, 36, "kg", true);
+        draw_big(2, buf);
+        draw_small(26, "kg");
         snprintf(buf, sizeof(buf), "%d", rem);
-        draw_big(50, buf);
-        oled_text((OLED_WIDTH - 6) / 2, 76, "g", true);
+        draw_big(36, buf);
+        draw_small(56, "g");
     }
 }
 
