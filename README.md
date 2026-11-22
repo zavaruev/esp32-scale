@@ -12,8 +12,7 @@ library — ESP-IDF and the code in this repository only.
 
 ![ST7789 wiring diagram](docs/images/wiring-st7789.svg)
 
-The 2.0\" GMT020-02 front-panel display is documented in [docs/pinout.md](docs/pinout.md).
-The v1.4.x firmware for it is released on branch `display-st7789`.
+The 2.0" GMT020-02 front-panel display is documented in [docs/pinout.md](docs/pinout.md). The v1.4.x firmware for it is released on branch `display-st7789`.
 
 ![Web interface](docs/images/web-ui.png)
 
