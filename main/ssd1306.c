@@ -128,7 +128,7 @@ int oled_text_bold(int x, int y, const char *str)
     return cx;
 }
 
-/* Большой текст с масштабом s (см. oled_big_text; 3 — как обычно). */
+/* Large text with scale s (see oled_big_text; 3 as usual). */
 int oled_big_text_s(int x, int y, const char *str, int s)
 {
     int cx = x;
