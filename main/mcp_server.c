@@ -20,7 +20,7 @@
  *   tools/call  -> get_weight: the fresh reading, the same fields as
  *                  /api/weight, as MCP tool content text;
  *                  tare: the POST /api/tare equivalent;
- *                  set_unit: arguments.unit, 0=g 1=kg 2=oz.
+ *                  set_unit: arguments.unit, 0=g 1=kg 2=oz 3=auto.
  *   ping        -> empty result.
  *
  * The JSON parser and the response builder are local: the messages are small
@@ -448,7 +448,7 @@ static const char MCP_TOOLS_JSON[] =
     "{\"name\":\"set_unit\","
     "\"description\":\"Switch the scale display unit.\","
     "\"inputSchema\":{\"type\":\"object\","
-    "\"properties\":{\"unit\":{\"type\":\"integer\",\"enum\":[0,1,2],\"description\":\"0=grams, 1=kilograms, 2=ounces\"}},"
+    "\"properties\":{\"unit\":{\"type\":\"integer\",\"enum\":[0,1,2,3],\"description\":\"0=grams, 1=kilograms, 2=ounces, 3=auto\"}},"
     "\"required\":[\"unit\"],\"additionalProperties\":false}}"
     "]}";
 
@@ -486,7 +486,7 @@ static size_t mcp_tools_call(char *out, size_t cap, size_t pos,
         const jval_t *args = params ? j_obj_get(params, "arguments") : NULL;
         const jval_t *u = args ? j_obj_get(args, "unit") : NULL;
         if (u != NULL && u->type == J_NUM &&
-            u->num >= 0.0 && u->num <= 2.0) {
+            u->num >= 0.0 && u->num <= 3.0) {
             weight_task_set_unit((scale_unit_t)(int)u->num);
             return wr(out, cap, pos,
                       ",\"result\":{\"content\":[{\"type\":\"text\","
