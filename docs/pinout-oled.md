@@ -1,47 +1,49 @@
-# Распиновка для OLED-варианта (текущая ветка display-oled)
+# Pinout for the OLED variant (display-oled branch)
 
-OLED 0.96" 128×64, I²C, SSD1306, 4 провода.
+OLED 0.96" 128×64, I²C, SSD1306, 4 wires.
 
-## Подключение OLED
+## OLED connections
 
 | OLED | ESP32-S3 |
 |---|---|
-| VCC | 3V3 (большинство модулей имеют регулятор и терпят 5 В, но 3.3 В безопаснее) |
+| VCC | 3V3 (most modules have a regulator and tolerate 5 V, but 3.3 V is safer) |
 | GND | GND |
 | SDA | **GPIO 14** |
 | SCL | **GPIO 21** |
 
-Адрес I²C: **0x3C** (если не заработает — попробовать 0x3D).
+I²C address: **0x3C** (if it doesn't work — try 0x3D).
 
-## Остальное (без изменений)
+## The rest (unchanged)
 
-| Устройство | GPIO |
+| Device | GPIO |
 |---|---|
 | HX711 DT / SCK | 16 / 17 |
-| Пищалка (активная) VCC / GND / I/O | 3V3 / GND / 47 |
-| Кнопки: строка 1 | GPIO 6 (контакт 1 шлейфа) |
-| Кнопки: строка 2 | GPIO 13 (контакт 5 шлейфа) |
-| Кнопки: столбцы | GPIO 8 / 9 / 7 (контакты 2 / 3 / 4) |
+| Buzzer (active) VCC / GND / I/O | 3V3 / GND / 47 |
+| Buttons: row 1 | GPIO 6 (ribbon contact 1) |
+| Buttons: row 2 | GPIO 13 (ribbon contact 5) |
+| Buttons: columns | GPIO 8 / 9 / 7 (contacts 2 / 3 / 4) |
 
-⚠️ Контакты **4 и 5 шлейфа подключены наоборот**: контакт 4 идёт на GPIO7,
-контакт 5 — на GPIO13. Прошивка учитывает это (коммит 131f482). Все 6 кнопок
-подтверждены рабочими: ЕД, СУМ, ИТТ, СБР, 0, Т. Кнопка `0` обнуляет вес и
-сохраняет тару в NVS.
+⚠️ Ribbon contacts **4 and 5 are wired the other way round** — contact 4
+goes to GPIO7, contact 5 — to GPIO13. The firmware accounts for this
+(commit 131f482). All 6 keys confirmed working: ED, SUM, ITT, SBR, 0, T.
+Button `0` takes the tare and stores it in NVS.
 
-## ⚠️ Конфликт GPIO14
+## ⚠️ GPIO14 conflict
 
-В OLED-варианте **GPIO14 = SDA**, поэтому он не используется для кнопок.
-Если вернётесь к GMT020 (ветка `display-gmt020`), там GPIO14 свободен.
+In the OLED variant **GPIO14 = SDA**, so it is not used for buttons.
+If you go back to GMT020 (branch `display-gmt020`), GPIO14 is free there.
 
-## Интерфейс
+## Interface
 
-На OLED крупными цифрами выводится вес (5×7 шрифт, масштаб 2×), сверху — единицы
-и статус, снизу — флаги STB/ZER/TRE/HLD. Hold-логика такая же, как в вебе.
+The weight is shown in large digits (5×7 font, scale 2×), with the unit
+underneath; above 1 kg the display shows two lines (`1 kg` and the gram
+remainder). The hold logic is the same as on the web.
 
-## Две ветки
+## Two branches
 
-- `display-gmt020` — GMT020-02-8P (ST7789 240×320) + LVGL. Сохранён для нового
-  модуля, который приедет из Китая. Коммит d18bd18.
-- `display-oled` — текущая, OLED 128×64 I²C, свой рендерер без LVGL.
+- `display-gmt020` — GMT020-02-8P (ST7789 240×320) + LVGL. Kept for a new
+  module — the first module failed after a few minutes of operation.
+  Commit d18bd18.
+- `display-oled` — current: OLED 128×64 I²C, its own renderer without LVGL.
 
-Переключение: `git checkout display-gmt020` / `git checkout display-oled`.
+Switch: `git checkout display-gmt020` / `git checkout display-oled`.

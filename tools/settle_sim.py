@@ -148,9 +148,9 @@ def report(path):
     step_t = t_s[idx]
 
     print("\n=== %s ===" % path)
-    print("  %d отсч., скачок на t=%.1f с: %.2f -> %.2f г"
+    print("  %d samples, step at t=%.1f s: %.2f -> %.2f g"
           % (len(counts), step_t, 0.0, true_g))
-    print("  шум сырого отсчёта: до %.0f мг, после %.0f мг"
+    print("  raw sample noise: up to %.0f mg, after %.0f mg"
           % (st.pstdev(pre) / CAL * 1000, st.pstdev(post) / CAL * 1000))
 
     # Trim to the part that matters: 12 s before and 30 s after.
@@ -160,8 +160,8 @@ def report(path):
     t = [x - t_s[lo] for x in t_s[lo:hi]]
     step_in = t[idx - lo]
 
-    for window, label, prog in ((AVG_WINDOW, "фикс. 45 (было)", False),
-                               (AVG_WINDOW, "прогрессивное (новое)", True)):
+    for window, label, prog in ((AVG_WINDOW, "fixed 45 (old)", False),
+                               (AVG_WINDOW, "progressive (new)", True)):
         seq = chain(c, t, window=window, progressive=prog)
         settle = None
         tol = 0.05
@@ -175,10 +175,10 @@ def report(path):
                     break
         tail = [g for tt, g in seq if tt > (t[-1] - 8.0)]
         sig = st.pstdev(tail) * 1000 if len(tail) > 5 else float('nan')
-        print("  окно %-22s отклик до ±0.05 г: %5.2f с   итоговый шум %5.0f мг"
+        print("  window %-22s response to ±0.05 g: %5.2f s   final noise %5.0f mg"
               % (label, settle if settle else -1, sig))
-    print("  сверху: страница опрашивает раз в %.0f мс и ждёт ещё %d опроса"
-          " до фиксации (HOLD), то есть %.1f с"
+    print("  top: the page polls every %.0f ms and waits another %d poll"
+          " before latching (HOLD), i.e. %.1f s"
           % (POLL_S * 1000, LOCK_HOLD, POLL_S * LOCK_HOLD))
 
 

@@ -5,8 +5,8 @@
  * column wires (contacts 2, 3, 4). All six intersections are populated:
  *
  *              col2(8)  col3(9)  col4(13)
- *   row1(6)     ЕД       СУМ       0
- *   row5(7)     Т        ИТТ       СБР
+ *   row1(6)     ED       SUM       0
+ *   row5(7)     T        ITT       SBR
  *
  * (Clarified 2026-11-21: the lower three keys are 2-5, 3-5 and 4-5, so the
  * common wire of that group is contact 5, not contact 6. GPIO15 is freed.)
@@ -22,12 +22,12 @@
 #include "esp_err.h"
 
 typedef enum {
-    BTN_ED = 0,   /* единицы измерения   */
-    BTN_SUM,      /* режимы / калибровка */
-    BTN_ZERO,     /* ноль                */
-    BTN_T,        /* тара / AZT          */
-    BTN_ITT,      /* удержание результата */
-    BTN_SBR,      /* сброс               */
+    BTN_ED = 0,   /* units */
+    BTN_SUM,      /* modes / calibration */
+    BTN_ZERO,     /* zero */
+    BTN_T,        /* tare / AZT */
+    BTN_ITT,      /* hold result */
+    BTN_SBR,      /* reset */
     BTN_COUNT,
 } button_id_t;
 

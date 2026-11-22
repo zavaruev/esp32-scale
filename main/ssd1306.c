@@ -105,7 +105,7 @@ int oled_text(int x, int y, const char *str, bool on)
     return cx;
 }
 
-/* Крупные цифры 5x7 * 3 = 15x21, шаг 18. Точка и минус - отдельно. */
+/* Large digits 5x7 * 3 = 15x21 px, pitch 18. The decimal point and the minus sign are drawn separately. */
 /* Bold small text: same glyphs with +1 px strokes and pitch 7 instead of 6,
  * so the labels look a little bigger. */
 int oled_text_bold(int x, int y, const char *str)
@@ -211,8 +211,8 @@ int oled_7seg(int x, int y, const char *str, bool on)
     return cx - x;
 }
 
-/* Настоящий поворот на 90 градусов (не отражение!).
- * Логическая точка (x,y) -> физическая (col,row):
+/* True 90-degree rotation (not a mirror!).
+ * Logical point (x,y) -> physical (col,row):
  *   CW :  col = 127 - y, row = x
  *   CCW:  col = y,       row = 63 - x
  */

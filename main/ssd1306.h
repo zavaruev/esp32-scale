@@ -17,8 +17,8 @@
 #define OLED_WIDTH  64
 #define OLED_HEIGHT 128
 
-/* Направление поворота: 0 = против часовой, 1 = по часовой.
- * Если буквы лягут на бок другой стороной — поменяйте на 1. */
+/* Rotation direction: 0 = counterclockwise, 1 = clockwise.
+ * If the letters lie tilted when flipped — set it to 1. */
 #define OLED_ROTATE_CW 1   /* the orientation the user confirmed as correct */
 
 esp_err_t ssd1306_init(void);
@@ -29,9 +29,9 @@ void oled_fill_rect(int x, int y, int w, int h, bool on);
 int  oled_text(int x, int y, const char *str, bool on);
 /* Bold variant of oled_text - strokes +1 px, pitch 7: labels look a bit bigger. */
 int  oled_text_bold(int x, int y, const char *str);
-/* Крупные цифры: 5x7, масштаб 3x = 15x21 px, шаг 18. */
+/* Large digits: 5x7, scale 3x = 15x21 px, pitch 18. */
 int  oled_big_text(int x, int y, const char *str, bool on);
-/* 7-сегментные цифры 11x21, шаг 13 — компактнее и всегда влезают. */
+/* 7-segment digits 11x21, pitch 13 — compact and always fit. */
 int  oled_7seg(int x, int y, const char *str, bool on);
 esp_err_t oled_flush(void);
 

@@ -1,242 +1,251 @@
-# Инструкция к весам ESP32_Scale
+# User manual for the scales (ESP32_Scale)
 
-> Пользовательское руководство: как подключить, включить, взвесить и обслуживать
-> весы на базе ESP32-S3. Ветка: `display-oled`. Что измерено — в таблицах выше.
+> How to connect, power on, weigh and service the scales built on the
+> ESP32-S3. Branch: `display-oled`. Measured values — in the tables below.
 
-## Обзор
+## Overview
 
-Это электронные весы: преобразователь HX711, постоянная 6 кг нагрузочная
-клетка и пользовательская плата ESP32-S3 на ESP-IDF. Интерфейсы —
-веб-страница (HTTP), серийная консоль (115200 бод) и MCP-сервер для агентов
-(`tools/scale_mcp.py`). Платформа светодиодная — центр платформы должен быть
-свободен, при взвешивании укладывайте вес в центр.
+This is an electronic scale: an HX711 converter, a constant 6 kg load cell
+and the ESP32-S3 user board on ESP-IDF. Interfaces — web page (HTTP),
+serial console (115200 baud) and the MCP server for agents
+(`tools/scale_mcp.py`). The platform is LED-lit — the center of the
+platform must be free; when weighing, place the load in the center.
 
-## Назначение и точность (измерено)
+## Accuracy (measured)
 
-| Параметр | Значение | Как получено |
+| Parameter | Value | How obtained |
 |---|---|---|
-| Частота выборок | **11.3 Гц** | ограничена железом |
-| Шум одной выборки | **110 мг** | 507 выборок на неподвижной платформе |
-| Шум средней | **15 мг** | среднее за ~4 с |
-| Точность по эталону 73.03 г | **+0.14 г (+0.20 %)** | две независимые пары, 9 мг между ними |
-| Время до показания | **1.15 с** | на замеренном переходе |
-| Разрешение отображения | **0.05 г** | измерено по эталону известной массы |
+| Sampling rate | **11.3 Hz** | hardware-limited, see below |
+| Single-sample noise | **110 mg** | 507 samples on a motionless platform |
+| Device-side mean noise | **15 mg** | mean over ~4 s |
+| Accuracy on a 73.03 g reference | **+0.14 g (+0.20 %)** | two independent pairs, 9 mg apart |
+| Time to a reading | **1.15 s** | measured step response |
+| Resolved value | **0.05 g** | measured against a reference of known mass |
 
-Платформа неподвижна: при взвешивании отойдите и дождитесь показания (зелёный
-флаг — вес измерен и «встал»). Пустая платформа при смене сессии может
-смещаться на **195 мг** — именно она ограничивает точность, поэтому тарировать
-нужно перед каждым взвешиванием.
+The platform is motionless: after the weight is placed, wait until the
+reading settles (the weight is measured and stable). The empty platform
+can wander by **195 mg** between sessions — that is the real limiter of
+accuracy, so **tare before every weighing.**
 
-## Железо и подключение
+## Hardware and wiring
 
 ### HX711 → ESP32-S3
 
-| HX711 | ESP32-S3 | Примечание |
+| HX711 | ESP32-S3 | Note |
 |---|---|---|
-| VCC | **3V3** | HX711 выдаёт DOUT на уровне своего питания; при 5 В — 5 В на GPIO16 |
+| VCC | **3V3** | HX711 drives DOUT at its own supply level; on 5 V that is 5 V on GPIO16 |
 | GND | GND | |
 | DOUT | GPIO16 | |
 | SCK | GPIO17 | |
 
-### Нагрузочная клетка
+Load cell (6 kg):
 
-| Провод | Куда |
+| Wire | Goes to |
 |---|---|
-| чёрный | E+ |
-| красный | E− |
-| зелёный | A− |
-| белый | A+ |
-| жёлтый | экранировка — к GND |
+| black | E+ |
+| red | E− |
+| green | A− |
+| white | A+ |
+| yellow | shield to GND |
 
-Питание платы и клетки — **3.3 В** (при 5 В попадает на GPIO16).
+Board and cell power — **3.3 V**.
 
-### Частота не повышается
+### Why the rate is not higher than 11.3 Hz
 
-У HX711 нет конфигурационного регистра; частота задана уровнем на пине 15:
-0 — 10 Гц, 1 — 80 Гц. Пин 15 соединён с землёй — ток выборки **11.3 Гц**
-постоянно. Переподключить пин 15 дало бы 80 выборок/с, но не точность —
-точность задаётся шумом и длиной усреднения.
+The HX711 has no configuration register; the rate is set by the level on
+pin 15: 0 for 10 Hz, 1 for 80 Hz. Pin 15 is tied to ground, so the
+instrument runs at 11.3 Hz permanently. Rewiring would give 80 SPS but
+would not improve accuracy: accuracy is set by the noise and the length of
+the averaging window, not the sampling rate.
 
-## Сборка и прошивка
+## Build and flash
 
 ```bash
 source ~/esp-idf/export.sh
 cd ~/ESP32_Scale
-idf.py set-target esp32s3      # только первый раз
+idf.py set-target esp32s3      # first build only
 idf.py build
 
 PORT=/dev/serial/by-id/usb-1a86_USB_Single_Serial_595B069397-if00
 idf.py -p "$PORT" -b 460800 flash
 ```
 
-**460800, не 921600** — на CH9102 выше ненадёжно. Перед первым флешем:
+**460800, not 921600** — on the CH9102 anything faster is unreliable. Before
+the first flash:
 
 ```bash
-cp main/credentials.h.example main/credentials.h   # внесите SSID и пароль
+cp main/credentials.h.example main/credentials.h   # fill in SSID and password
 ```
 
-`main/credentials.h` не попадает в репозиторий.
+`main/credentials.h` is in `.gitignore` and never reaches the repository.
 
 ## WiFi
 
-Весы поднимают станцию и получают адрес по DHCP — сейчас
-`http://192.168.22.123/` (адрес выводится в серийной консоли). Проверка:
-команда `s` — скан с уровнями и полосами; `h` — самопроверка страницы.
+The device joins the `home4` access point and takes an address over DHCP —
+currently `http://192.168.22.123/` (the serial console prints the address
+it was given). Diagnostics: `s` — scan with SSID, RSSI, channel, encryption
+type, bandwidth; `h` — self-test of the page.
 
-**Fallback на точку доступа отключён.** Если станция не подключилась —
-веб-интерфейса нет. Интерфейс без аутентификации: любой, кто сможет достать
-до устройства по сети, может заменить прошивку.
+There is no access-point fallback at the moment: the device acts as a
+station only.
 
-## Работа с весами
+## Weighing
 
-1. Подождите, пока платформа остановится; не трогайте её.
-2. Взвешивание: тарировать (кнопка `0` на OLED или `POST /api/tare`),
-   каждый раз на пустой платформе.
-3. Разместите вес в центре, дождитесь показания и флага «встал».
+1. Let the platform settle; do not touch it.
+2. Tare (button `0` or `POST /api/tare`) — every time, on an empty platform.
+3. Place the load in the center and wait for the reading to settle.
 
-## Фронт-панель, OLED и кнопки (ветка display-oled)
+## Front panel, display and buzzer (display-oled branch)
 
-Модуль **0.96" OLED 128×64, I²C, SSD1306** (адрес 0x3C); центральная плата с
-активным пьезо-пищалкой (GPIO 47). Распиновка — `docs/pinout-oled.md`:
+The module is a **0.96" OLED 128×64, I²C, SSD1306** (address 0x3C); the
+central board has an active piezo buzzer (GPIO 47). Wiring — `docs/pinout-oled.md`:
 SDA/SCL — GPIO 14/21.
 
-### Назначение кнопок (матрица 2×3, 6 клавиш)
+### Button assignments
 
-Лента кнопок — шлейф 1–5 на GPIO 6, 13, 8, 9, 7: контакт 1 — строка (GPIO 6),
-контакты 2–4 — столбцы (GPIO 8 / 9 / 7), контакт 5 — строка 2 (GPIO 13).
+The ribbon — GPIO 6, 13, 8, 9, 7: contact 1 — row (GPIO 6), contacts 2–4 —
+columns (GPIO 8 / 9 / 7), contact 5 — row 2 (GPIO 13).
 
-⚠️ Контакты **4 и 5 подключены наоборот** — контакт 4 — на GPIO7,
-контакт 5 — на GPIO13. Прошивка учитывает — все шесть клавиш
-(ЕД, СУМ, ИТТ, СБР, 0, Т) работают; диагностика — серийная команда `Z`
-(`#BTN,<имя>,row=,col=,state=` по каждой клавише).
+⚠️ Ribbon contacts **4 and 5 are wired the other way round** — contact 4
+is on GPIO7, contact 5 — on GPIO13. The firmware accounts for this — all
+six keys (ED, SUM, ITT, SBR, 0, T) work; diagnose with the `Z` serial
+command (`#BTN,<name>,row=,col=,state=` per key). The button labels in the
+manual are the English equivalents of the physical Russian labels.
 
-| Кнопка | Краткое нажатие | Удержание ≥ 1.5 с |
+| Button | Short press | Hold ≥ 1.5 s |
 |---|---|---|
-| `ЕД` | цикл единиц: г → кг → oz → г | — |
-| `СУМ` | — (в прошивке «режимы / калибровка») | **запуск мастера калибровки** |
-| `0` | тарировать, сохранить тару в NVS | — |
-| `Т` | тарировать | вкл./выкл. автонуль (AZT) |
-| `ИТТ` | — (удержание результата) | — |
-| `СБР` | — (сброс) | — |
+| `ED` | cycle units: g → kg → oz → g | — |
+| `SUM` | — (in the firmware "modes / calibration") | **start the calibration master** |
+| `0` | tare, store the tare in NVS | — |
+| `T` | tare | toggle auto-zero (AZT) |
+| `ITT` | — (hold result) | — |
+| `SBR` | — (reset) | — |
 
-Долгое нажатие — не менее 1500 мс (`LONG_PRESS_MS` в `main/buttons.c`);
-краткое — после 20 мс стабильности (4 скана по 5 мс).
+A long press is not less than 1500 ms (`LONG_PRESS_MS` in `main/buttons.c`);
+a short one — after 20 ms of stability (4 scans × 5 ms).
 
-### Индикаторы на дисплее
+### Display indicators
 
-Чипы справа внизу (`main/oled_ui.c`; имена как в вебе — STABLE, ZERO,
-TARE, AVG, HOLD):
+Chips along the bottom right (`main/oled_ui.c`; names as on the web —
+STABLE, ZERO, TARE, AVG, HOLD):
 
-| Индикатор | Светится, когда |
+| Indicator | Lights when |
 |---|---|
-| `STBL` | вес измерен и «встал» — то же условие, что **зелёный флаг чтения** в вебе; на OLED — чип + бип |
-| `ZERO` | вес на нуле / активна нулевая фиксация |
-| `TARE` | активна тара |
-| `AVG` | прогрессивное усреднение включено (`avg_n ≥ 45`) |
-| `HOLD` | показание зафиксировано |
+| `STBL` | the weight is measured and stable — the same state as the **green reading flag** on the web; on the OLED — the chip + beep |
+| `ZERO` | the weight is zero / the zero latch is active |
+| `TARE` | the tare is active |
+| `AVG` | progressive averaging is on (`avg_n ≥ 45`) |
+| `HOLD` | the reading is latched |
 
-- Вес выводится крупными цифрами с единицей под ними: меньше 1 кг — цифры + `g`;
-  больше 1 кг — две строки (`1 kg` и остаток в граммах с `g`).
-- Пьезо-пищалка: бип при первом «встале», звук предупреждения при весе свыше 6 кг.
+- The weight is shown in large digits with the unit underneath: less than
+  1 kg — digits + `g`; more than 1 kg — two lines (`1 kg` and the gram
+  remainder with `g`).
+- The piezo buzzer: a beep when the weight first settles, a warning
+  sound when the weight exceeds 6 kg.
 
-Калибровка на весах: вставьте эталон (по умолчанию 73.03 г), удерживайте
-`СУМ` 1.5 с, подождите, пока покажет новый ноль. **Не берите массу эталона
-из надписи на нём** — взвесьте: 5 монет по 5 рублей — это 30.63 г, а не 15 г.
+Weight check: place the reference on the platform (default 73.03 g),
+hold `SUM` for 1.5 s, wait until the new zero shows. **Do not take the
+reference mass from its label** — weigh it: 5 coins of 5 rubles weigh
+30.63 g, not 15 g.
 
-## Веб-интерфейс
+## Web interface
 
-- **Zero** — кнопка тары.
-- **Auto-zero** — включение/выключение автонуля.
-- Чтение становится **зелёным** — вес измерен и встал.
-- Опрос — **500 мс**; показания обновляются сами.
-- **Firmware** — обновление с `build/esp32_scale.bin` (прогресс-бар).
-- **Diagnostics** — `GET /api/buttons` (OLED-сборка).
-- Веса двух слотов: обновление пишет в свободный, перезагружайте после
-  «verified»; при неудаче — автоматический откат на предыдущий слот.
+- **Zero** — the tare button.
+- **Auto-zero** — toggling the auto-zero.
+- The reading turns **green** when the weight is measured and stable.
+- Polling — **500 ms**; readings update on their own.
+- **Firmware** — update from `build/esp32_scale.bin` (progress bar).
+- **Diagnostics** — `GET /api/buttons` (OLED build).
+- Two-slot OTA: the update writes to the free slot, restart after
+  "verified"; on failure — rollback to the previous slot.
 
 ## HTTP API
 
-| Метод и путь | Действие |
+| Method and path | Purpose |
 |---|---|
-| `GET /` | страницу |
-| `GET /api/weight` | показания: `value`, `grams`, `counts`, `sigma_mg` (шум выборки), `avg_grams`, `avg_sigma_mg`, `avg_n` — среднее на устройстве и его ошибка |
-| `POST /api/tare` | тарировать |
-| `POST /api/unit?u=0\|1\|2` | единицы: 0 = г, 1 = кг, 2 = oz |
-| `POST /api/azt?off` | выключить автонуль; без параметра — включить |
-| `POST /api/cal/start[?mass=g]` | мастер калибровки |
-| `GET /api/cal` | ход калибровки |
-| `POST /api/reboot` | перезагрузка |
-| `GET /api/ota` | состояние прошивки: слот, версии, принятые байты |
-| `POST /api/ota?size=N` | открыть передачу, стереть свободный слот |
-| `POST /api/ota?offset=N` | отправить чанк в смещении N |
-| `POST /api/ota?commit=1` | проверить и запланировать загрузку |
-| `POST /api/ota?abort=1` | отменить |
+| `GET /` | the page |
+| `GET /api/weight` | readings: `value`, `grams`, `counts`, `sigma_mg` (single-sample noise), `avg_grams`, `avg_sigma_mg`, `avg_n` — the device-side mean and its standard error |
+| `POST /api/tare` | tare |
+| `POST /api/unit?u=0\|1\|2` | units: 0 = g, 1 = kg, 2 = oz |
+| `POST /api/azt?off` | switch auto-zero off; no parameter switches it on |
+| `POST /api/cal/start[?mass=g]` | calibration wizard |
+| `GET /api/cal` | calibration progress |
+| `POST /api/reboot` | restart |
+| `GET /api/ota` | firmware status: slot, versions, bytes written |
+| `POST /api/ota?size=N` | open the transfer, erase the free slot |
+| `POST /api/ota?offset=N` | send one chunk at that offset |
+| `POST /api/ota?commit=1` | verify and mark the new slot to boot |
+| `POST /api/ota?abort=1` | discard a partial transfer |
 
-Никакой аутентификации нет — см. выше. `/api/weight` — `avg_sigma_mg`
-показывает, до какого разрешения можно верить цифре.
+None require authentication — see the web interface section. `/api/weight`
+— `avg_sigma_mg` shows how far the figure can be trusted.
 
-## Серийная консоль (115200 бод)
+## Serial console (115200 baud)
 
-Опрос: `python3 tools/serial_console.py --send 'R' --seconds 50`.
+Poll: `python3 tools/serial_console.py --send 'R' --seconds 50`.
 
-| Команда | Действие |
+| Command | Action |
 |---|---|
-| `c` | текущее показание, шум, флаги нуля и стабильности |
-| `t` | тарировать |
-| `d [min]` | наблюдение за нулём (по умолчанию 20) |
-| `m [g]` | парная калибровка с автоопределением нагрузки |
-| `w` | константы фильтра и состояние |
-| `R` | дамп сырых выборок с задачи измерения |
-| `h` | самопроверка страницы |
-| `x 0\|1` | выключить/включить радио |
-| `T <dBm>` | мощность передачи в рантайме |
-| `G 0\|1` | маска прерываний вокруг чтения HX711 |
-| `s` | скан WiFi: SSID, RSSI, канал, шифрование |
-| `k <password>` | пароль без пересборки |
-| `b <MAC>` | привязка к AP, `b off` — очистить |
-| `p 0\|1`, `a 0..2` | PMF и режим аутентификации |
-| `L 0\|1`, `M <MAC>` | отладочный лог WiFi и переопределение MAC |
-| `Z` | дамп кнопок (OLED-сборка) |
-| `A <0..7>` | образец бипа (пьезо) |
-| `F <grams>` | задать массу эталона для однонажатия |
+| `c` | current reading, noise, zero and stability flags |
+| `t` | tare |
+| `d [min]` | watch zero stability (default 20) |
+| `m [g]` | paired calibration with automatic load detection |
+| `w` | filter constants and state |
+| `R` | dump raw samples recorded by the measurement task |
+| `h` | HTTP server self-test |
+| `x 0\|1` | suspend / resume the WiFi radio |
+| `T <dBm>` | transmit power at runtime |
+| `G 0\|1` | interrupt mask around the HX711 read |
+| `s` | WiFi scan: SSID, RSSI, channel, encryption type, bandwidth |
+| `k <password>` | replace the password without rebuilding |
+| `b <MAC>` | bind to a specific access point, `b off` to clear |
+| `p 0\|1`, `a 0..2` | PMF and authentication mode |
+| `L 0\|1`, `M <MAC>` | WiFi debug log and MAC override |
+| `Z` | dump of the buttons (OLED build) |
+| `A <0..7>` | a beep pattern (piezo) |
+| `F <grams>` | set the reference mass for one-touch calibration |
 
-## Калибровка (две точки, спаренный метод)
+## Calibration (two points, paired method)
 
-Пустая платформа — отдельная точка, эталон — отдельно:
+Empty platform — a separate point, reference — separate:
 
 ```
 mass     73.066 g    reference 73.03 g
 ERROR  +0.036 g  (+0.05 %)
 ```
 
-- Записать `cal_factor` в NVS и `tare_offset` — `m [g]` с парой точек
-  (флаг-ошибка: чтение массы из документации вместо взвешивания).
-- `cal_factor` ≈ **425.6 counts/g** (по эталону 161.41 г — 68 692 в счётах);
-  `F` по умолчанию 73.03 г.
-- Проверка сверху: 1327 г на кухонной везе — 426.5 против 425.2
-  (расхождение 0.3 %).
+- Store `cal_factor` in NVS and `tare_offset` — `m [g]` with the pair of
+  points (error flag: taking the mass from the documentation instead of
+  weighing it).
+- `cal_factor` ≈ **425.6 counts/g** (by the 161.41 g reference — 68 692
+  counts); `F` default 73.03 g.
+- Check at the top: 1327 g on the kitchen scale — 426.5 against 425.2
+  (discrepancy 0.3 %).
 
-## MCP-сервер (для агентов)
+## MCP server (for agents)
 
 `opencode.jsonc` → `mcp.servers.scale` (`python3 tools/scale_mcp.py`).
-Адрес по умолчанию `http://192.168.22.123`, переопределение — `SCALE_URL`.
+Default address `http://192.168.22.123`, override — `SCALE_URL`.
 
-| Инструмент | Действие |
+| Tool | Action |
 |---|---|
-| `scale_get_weight` | показания, флаги, текущие константы, uptime |
-| `scale_tare` | тарировать |
-| `scale_set_unit` | единицы: 0 = г, 1 = кг, 2 = oz |
+| `scale_get_weight` | readings, flags, current constants, uptime |
+| `scale_tare` | tare |
+| `scale_set_unit` | units: 0 = g, 1 = kg, 2 = oz |
 
-## Что часто бывает не так
+## Known issues and troubleshooting
 
-- Мультиметр не диагностирует клетку (сигнал на 73 г — около 80 µV,
-  точность метра выше). Нужен осциллограф.
-- Пустая платформа может смещаться между сессиями (195 мг) — тарировать
-  перед каждым взвешиванием.
-- USB соединение ненадёжно — проверьте, что порт есть в системе.
-- Для детальных измерений шума и траблшутинга читайте `AGENTS.md` и
-  `docs/stage1-findings.md`.
+- A multimeter cannot diagnose the cell (the signal for 73 g is about
+  80 µV, and an ordinary meter reports its own error at that level).
+  An oscilloscope is needed.
+- The empty platform can wander by **195 mg** between sessions — tare
+  before every weighing.
+- The USB connection is unreliable — check that the port exists in the
+  system.
+- For detailed noise measurements and troubleshooting, read `AGENTS.md`
+  and `docs/stage1-findings.md`.
 
 ---
 
-Инструкция поддерживается в `README.md` (разделы про WiFi и прошивку подробнее).
+The manual is supported by `README.md` (its WiFi and firmware sections
+are more detailed).

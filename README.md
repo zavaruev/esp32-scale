@@ -170,11 +170,11 @@ The button ribbon is a 2×3 matrix on contacts 1–5:
 
 ⚠️ Contacts **4 and 5 are wired the other way round** on the ribbon, so column
 4 is GPIO7 and row 2 is GPIO13. The firmware accounts for this; all six keys
-(ЕД, СУМ, ИТТ, СБР, 0, Т) are confirmed working. Pressing `0` takes the tare and
+(ED, SUM, ITT, SBR, 0, T) are confirmed working. Pressing `0` takes the tare and
 stores it in NVS.
 
 New console commands: `Z` (read all buttons), `A <0..7>` (play a beep pattern),
-`F <grams>` (set the reference mass for one-touch calibration). Hold `СУМ` for
+`F <grams>` (set the reference mass for one-touch calibration). Hold `SUM` for
 1.5 s to start calibration; the wizard uses the mass set by `F` (73.03 g by
 default). A diagnostic `GET /api/buttons` reports the live matrix and raw GPIO
 levels.
