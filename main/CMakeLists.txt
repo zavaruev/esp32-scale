@@ -34,6 +34,7 @@ idf_component_register(
          "buttons.c"
          "audio.c"
          "ui.c"
+         "mcp_server.c"
          "${WEB_HEADER}"
     INCLUDE_DIRS "."
     REQUIRES esp_driver_gpio

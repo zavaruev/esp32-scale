@@ -5,6 +5,8 @@
 
 /* Brings up WiFi STA and the HTTP server. Returns immediately; the connection
  * runs in the background and retries on its own. */
+void web_weight_json(char *buf, size_t cap);
+
 esp_err_t net_start(void);
 
 /* Scans and prints nearby APs with their auth mode. The host has no WiFi radio, so

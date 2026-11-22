@@ -42,6 +42,7 @@
 #include "scale_filter.h"
 #include "weight_task.h"
 #include "ui.h"
+#include "mcp_server.h"
 
 static const char *TAG = "web";
 
@@ -508,7 +509,8 @@ static void wifi_start(void)
 
 /* --------------------------------------------------------------- HTTP API */
 
-static esp_err_t api_weight(httpd_req_t *req)
+/* Shared by /api/weight and the device-side MCP get_weight tool. */
+void web_weight_json(char *buf, size_t cap)
 {
     scale_snapshot_t s;
     weight_task_get(&s);
@@ -534,27 +536,31 @@ static esp_err_t api_weight(httpd_req_t *req)
         break;
     }
 
-    char buf[384];
-    int n = snprintf(buf, sizeof(buf),
-                     "{\"value\":%.4f,\"unit\":\"%s\",\"decimals\":%d,"
-                     "\"grams\":%.2f,\"stable\":%s,\"zero\":%s,\"tare\":%s,"
-                     "\"counts\":%ld,\"sigma_mg\":%.1f,\"cal\":%.2f,"
-                     "\"tare_offset\":%ld,\"uptime\":%lu,\"azt\":%s,"
-                     "\"avg_grams\":%.3f,\"avg_sigma_mg\":%.1f,\"avg_n\":%u,"
-                     "\"heap_free\":%lu,\"heap_min\":%lu}",
-                     (double)s.display_value, unit, decimals, (double)s.grams,
-                     s.stable ? "true" : "false", s.zero ? "true" : "false",
-                     s.tare_active ? "true" : "false", (long)s.counts,
-                     (double)s.sigma_mg, (double)s.cal_factor,
-                     (long)s.tare_offset, (unsigned long)s.uptime_s,
-                     s.azt_enabled ? "true" : "false",
-                     (double)s.avg_grams, (double)s.avg_sigma_mg,
-                     (unsigned)s.avg_n,
-                     (unsigned long)esp_get_free_heap_size(),
-                     (unsigned long)esp_get_minimum_free_heap_size());
+    snprintf(buf, cap,
+             "{\"value\":%.4f,\"unit\":\"%s\",\"decimals\":%d,"
+             "\"grams\":%.2f,\"stable\":%s,\"zero\":%s,\"tare\":%s,"
+             "\"counts\":%ld,\"sigma_mg\":%.1f,\"cal\":%.2f,"
+             "\"tare_offset\":%ld,\"uptime\":%lu,\"azt\":%s,"
+             "\"avg_grams\":%.3f,\"avg_sigma_mg\":%.1f,\"avg_n\":%u,"
+             "\"heap_free\":%lu,\"heap_min\":%lu}",
+             (double)s.display_value, unit, decimals, (double)s.grams,
+             s.stable ? "true" : "false", s.zero ? "true" : "false",
+             s.tare_active ? "true" : "false", (long)s.counts,
+             (double)s.sigma_mg, (double)s.cal_factor,
+             (long)s.tare_offset, (unsigned long)s.uptime_s,
+             s.azt_enabled ? "true" : "false",
+             (double)s.avg_grams, (double)s.avg_sigma_mg,
+             (unsigned)s.avg_n,
+             (unsigned long)esp_get_free_heap_size(),
+             (unsigned long)esp_get_minimum_free_heap_size());
+}
 
+static esp_err_t api_weight(httpd_req_t *req)
+{
+    char buf[384];
+    web_weight_json(buf, sizeof(buf));
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, buf, n);
+    httpd_resp_send(req, buf, strlen(buf));
     return ESP_OK;
 }
 
@@ -1343,6 +1349,9 @@ void web_server_start(void)
         httpd_uri_t reboot = {
         .uri = "/api/reboot", .method = HTTP_POST, .handler = api_reboot,
         };
+        httpd_uri_t mcp = {
+        .uri = "/mcp", .method = HTTP_POST, .handler = mcp_handler,
+        };
 
         ESP_ERROR_CHECK(httpd_register_uri_handler(server, &root));
         ESP_ERROR_CHECK(httpd_register_uri_handler(server, &w));
@@ -1354,6 +1363,7 @@ void web_server_start(void)
         ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_get));
         ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_post));
         ESP_ERROR_CHECK(httpd_register_uri_handler(server, &reboot));
+        ESP_ERROR_CHECK(httpd_register_uri_handler(server, &mcp));
 
         /* Count the URI handlers at compile time. If a route is added, add it to
          * this list too - the assert fails the build instead of rebooting the
@@ -1361,7 +1371,7 @@ void web_server_start(void)
          * literal ("10"), which silently did nothing if the literal was forgotten. */
         enum {
         H_ROOT, H_W, H_T, H_U, H_A, H_CSTART, H_CSTATE,
-        H_OTA_GET, H_OTA_POST, H_REBOOT,
+        H_OTA_GET, H_OTA_POST, H_REBOOT, H_MCP,
         HANDLER_COUNT,
         };
         _Static_assert(HANDLER_COUNT <= HTTP_MAX_HANDLERS,
