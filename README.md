@@ -209,7 +209,7 @@ never touch the HX711 bus. Short presses do the following:
 
 | Key | Action |
 |---|---|
-| `ЕД` | Cycle the display unit: g → kg → oz |
+| `ЕД` | Switch between automatic units and ounces. AUTO shows grams below 1 kg and kilograms at/above 1 kg |
 | `СУМ` | Open the calibration screen; **hold for 1.5 s** to start calibration |
 | `0` | Zero the current reading |
 | `Т` | Take a tare; **hold for 1.5 s** to toggle auto-zero (AZT) |
