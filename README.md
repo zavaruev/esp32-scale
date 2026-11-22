@@ -6,6 +6,8 @@ converter, custom firmware on ESP-IDF and a web interface.
 Nothing here comes from ESPHome, Arduino or any off-the-shelf measurement
 library — ESP-IDF and the code in this repository only.
 
+> **ST7789 front panel:** the 2.0" GMT020-02 display firmware is released as [v1.4.0](https://github.com/zavaruev/esp32-scale/releases/tag/v1.4.0) on branch `display-st7789`. The default `main` branch keeps the SSD1306 OLED variant.
+
 ## What the instrument actually shows
 
 Not the numbers from the specification, but measured ones. The method is a
