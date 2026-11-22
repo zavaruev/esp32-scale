@@ -20,10 +20,10 @@
 static const char *TAG = "buttons";
 
 #define ROW1 GPIO_NUM_6   /* ribbon contact 1 */
-#define ROW2 GPIO_NUM_7   /* ribbon contact 5 */
+#define ROW2 GPIO_NUM_13   /* ribbon contact 5 */
 #define COL2 GPIO_NUM_8   /* ribbon contact 2 */
 #define COL3 GPIO_NUM_9   /* ribbon contact 3 */
-#define COL4 GPIO_NUM_13  /* ribbon contact 4 */
+#define COL4 GPIO_NUM_7  /* ribbon contact 4 */
 
 #define SCAN_PERIOD_MS   5
 #define DEBOUNCE_SCANS   4
@@ -91,7 +91,7 @@ static bool scan_key(gpio_num_t row, gpio_num_t col)
 {
     gpio_set_direction(row, GPIO_MODE_OUTPUT);
     gpio_set_level(row, 0);
-    esp_rom_delay_us(10);
+    esp_rom_delay_us(100);
     bool pressed = (gpio_get_level(col) == 0);
     /* Floating again BEFORE the next row is driven. */
     gpio_set_direction(row, GPIO_MODE_INPUT);

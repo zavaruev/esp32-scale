@@ -40,7 +40,7 @@
 #define ST7789_MIRROR_X false
 #define ST7789_MIRROR_Y false
 /* The module's reference code sends 0x21 = display inversion ON. */
-#define ST7789_INVERT   true
+#define ST7789_INVERT   false
 
 /* The module's reference code uses 20 MHz. Keep that value: 27 MHz over long
  * jumper wires is less reliable. */

@@ -61,7 +61,7 @@ esp_err_t st7789_init(esp_lcd_panel_io_handle_t *out_io,
     esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = ST7789_PIN_RST,
         .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
-        .data_endian = LCD_RGB_DATA_ENDIAN_BIG,
+        .data_endian = LCD_RGB_DATA_ENDIAN_LITTLE,
         .bits_per_pixel = 16,
     };
     esp_lcd_panel_handle_t panel = NULL;

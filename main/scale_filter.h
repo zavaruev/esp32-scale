@@ -20,6 +20,7 @@ typedef enum {
     UNIT_GRAM = 0,
     UNIT_KILOGRAM,
     UNIT_OUNCE,
+    UNIT_AUTO = 3,
 } scale_unit_t;
 
 typedef struct {

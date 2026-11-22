@@ -55,4 +55,8 @@ void wifi_set_mac(const char *txt);
 void wifi_set_password(const char *pw);
 int wifi_get_auth_mode(void);
 
+int16_t wifi_get_rssi(void);
+
+void ntp_start(void);
+
 #endif /* WEB_SERVER_H */

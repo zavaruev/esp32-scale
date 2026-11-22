@@ -237,13 +237,13 @@ static void raw_dump(void)
  */
 static void on_button(button_id_t id, button_press_t press)
 {
+    ui_notify_activity();
     if (press == BTN_SHORT) {
         switch (id) {
         case BTN_ED: {
             scale_snapshot_t s;
             weight_task_get(&s);
-            int next = ((int)s.unit + 1) % 3;
-            weight_task_set_unit((scale_unit_t)next);
+            weight_task_set_unit(s.unit == UNIT_OUNCE ? UNIT_AUTO : UNIT_OUNCE);
             break;
         }
         case BTN_ZERO:
@@ -252,11 +252,16 @@ static void on_button(button_id_t id, button_press_t press)
             audio_play(AUDIO_TARE);
             break;
         case BTN_ITT:
-            /* HOLD is computed by the UI task; show the weighing screen. */
-            ui_show_page(UI_PAGE_WEIGH);
+            ui_toggle_hold();
+            audio_play(AUDIO_STABLE);
             break;
         case BTN_SUM:
+            ui_show_page(UI_PAGE_CAL);
+            audio_play(AUDIO_CAL_START);
+            weight_task_cal_start(weight_task_get_ref_mass());
+            break;
         case BTN_SBR:
+            ui_clear_hold();
             ui_show_page(UI_PAGE_WEIGH);
             break;
         default:
@@ -335,6 +340,7 @@ void app_main(void)
      * update stick instead of reverting on the next restart. */
     ota_init();
     ESP_ERROR_CHECK(net_start());
+    ntp_start();
     wifi_start_ap_fallback();
 
     /* Display + UI come up in their own task after 3 s (see above). Audio and

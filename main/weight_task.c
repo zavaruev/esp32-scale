@@ -166,7 +166,8 @@ static bool nvs_load(scale_filter_t *f)
      * counts - value*cal_factor: it must land on the stored tare. */
     f->azt_anchor = (double)tare;
     f->azt_since_us = 0;
-    f->unit = (scale_unit_t)(unit % 3);
+    /* Legacy NVS values 0/1 (g/kg) become AUTO; 2 stays ounces. */
+    f->unit = (unit == 2) ? UNIT_OUNCE : UNIT_AUTO;
     /* Kept so the boot tare can tell an empty platform from a loaded one. See
      * the block in the measurement task. */
     nvs_tare_counts = tare;
@@ -369,7 +370,15 @@ static void measure_task(void *arg)
                                             filter.cal_factor * 1000.0);
 
             snapshot.grams = r.grams;
-            snapshot.display_value = (float)scale_convert_units(&filter, r.grams);
+            if (filter.unit == UNIT_AUTO) {
+                snapshot.effective_unit = (fabsf(snapshot.avg_grams) >= 1000.0f)
+                                          ? UNIT_KILOGRAM : UNIT_GRAM;
+                snapshot.display_value =
+                    (float)scale_convert_units(&filter, snapshot.avg_grams);
+            } else {
+                snapshot.effective_unit = filter.unit;
+                snapshot.display_value = (float)scale_convert_units(&filter, r.grams);
+            }
             snapshot.sigma_mg = sigma_est / filter.cal_factor * 1000.0f;
             snapshot.stable = r.stable;
             snapshot.zero = r.zero;

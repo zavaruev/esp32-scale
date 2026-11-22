@@ -17,6 +17,8 @@
  */
 
 #include <math.h>
+#include <time.h>
+#include "esp_sntp.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,6 +41,7 @@
 #include "ota.h"
 #include "scale_filter.h"
 #include "weight_task.h"
+#include "ui.h"
 
 static const char *TAG = "web";
 
@@ -512,7 +515,7 @@ static esp_err_t api_weight(httpd_req_t *req)
 
     const char *unit = "g";
     int decimals = 2;
-    switch (s.unit) {
+    switch (s.effective_unit) {
     case UNIT_KILOGRAM:
         unit = "kg";
         decimals = 4;
@@ -520,6 +523,12 @@ static esp_err_t api_weight(httpd_req_t *req)
     case UNIT_OUNCE:
         unit = "oz";
         decimals = 3;
+        break;
+    case UNIT_AUTO:
+        if (s.grams >= 1000.0f || s.grams <= -1000.0f) {
+            unit = "kg";
+            decimals = 3;
+        }
         break;
     default:
         break;
@@ -565,7 +574,7 @@ static esp_err_t api_unit(httpd_req_t *req)
         httpd_req_get_url_query_str(req, q, sizeof(q));
         if (q[0] == 'u' && q[1] == '=') {
             int u = atoi(&q[2]);
-            if (u >= 0 && u <= 2) {
+            if (u >= 0 && u <= 3) {
                 weight_task_set_unit((scale_unit_t)u);
             }
         }
@@ -1367,4 +1376,19 @@ void net_start(void)
 {
     wifi_start();
     web_server_start();
+}
+int16_t wifi_get_rssi(void)
+{
+    wifi_ap_record_t ap;
+    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) return -32768;
+    return ap.rssi;
+}
+
+void ntp_start(void)
+{
+    setenv("TZ", "MSK-3", 1);
+    tzset();
+    esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_init();
 }

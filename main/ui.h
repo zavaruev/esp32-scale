@@ -21,5 +21,8 @@ typedef enum {
  * attach its flush callback to the SPI display. */
 esp_err_t ui_init(esp_lcd_panel_io_handle_t io, esp_lcd_panel_handle_t panel);
 void ui_show_page(ui_page_t page);
+void ui_toggle_hold(void);
+void ui_clear_hold(void);
+void ui_notify_activity(void);
 
 #endif /* UI_H */

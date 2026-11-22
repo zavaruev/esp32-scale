@@ -23,6 +23,8 @@ typedef struct {
     float   cal_factor;
     int32_t tare_offset;
     scale_unit_t unit;
+    /* AUTO resolved against the averaged reading, shared by UI and web. */
+    scale_unit_t effective_unit;
     uint32_t uptime_s;
     /* Increments once per fresh HX711 read. A reader polling faster than the
      * 11.3 Hz conversion rate would otherwise be unable to tell a new sample

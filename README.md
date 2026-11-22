@@ -162,12 +162,39 @@ row wires on contacts 1 and 5, column wires on contacts 2, 3 and 4.
 
 New console commands: `Z` (read all buttons), `Y 0|1` (backlight), `A <0..7>`
 (play a beep pattern), `F <grams>` (set the reference mass for one-touch
-calibration). Hold `СУМ` for 1.5 s to start calibration; the wizard uses the mass
+calibration). Hold `SUM` for 1.5 s to start calibration; the wizard uses the mass
 set by `F` (73.03 g by default).
 
 Everything new runs on **Core 1**; Core 0 remains the sole owner of the HX711.
 The buzzer draws only a few mA directly from a GPIO, so it does not disturb the
 measurement supply.
+
+### Display behaviour in v1.4.0
+
+![ST7789 wiring diagram](docs/images/wiring-st7789.svg)
+
+* **Units.** `ED` toggles between AUTO and ounces. AUTO shows grams with two
+  decimals below 1 kg and kilograms with three decimals at or above 1 kg. The
+  web page and the panel use the same averaged reading for that decision, so
+  they cannot disagree at the boundary.
+* **Buttons.** `SUM` starts calibration (short or long), `ITT` holds/releases
+  the result, `SBR` clears the hold, `T` takes a tare (long press toggles AZT),
+  `0` zeroes the reading.
+* **Overload.** Above 6 kg the number turns amber and `! >6 kg` appears - the
+  reading keeps updating. At 10 kg the display switches to `OVER` / `PANIC` and
+  stops updating. Both thresholds have hysteresis to avoid repeated alarms.
+  These are mechanical warnings: the HX711 still has range up to about 19.7 kg,
+  but the cell is rated for 6 kg.
+* **Idle clock.** After 60 s with an empty, stable platform the panel shows a
+  large `HH:MM` and date. Time comes from NTP (`pool.ntp.org`, MSK/UTC+3); it
+  displays `--:--` until synced. A load of 5 g or more, or any button press,
+  returns immediately to the weighing screen; smaller loads must persist for
+  about 4 s.
+* **Colours.** The panel applies BGR channel order and inversion. The
+  framebuffer colours in `main/ui.c` are pre-distorted so the displayed colours
+  are the intended dark blue, white, blue and green.
+
+![Web interface](docs/images/web-ui.png)
 
 ## Updating the firmware
 
