@@ -8,6 +8,15 @@ library — ESP-IDF and the code in this repository only.
 
 > **ST7789 front panel:** the 2.0" GMT020-02 display firmware is released as [v1.4.0](https://github.com/zavaruev/esp32-scale/releases/tag/v1.4.0) on branch `display-st7789`. The default `main` branch keeps the SSD1306 OLED variant.
 
+## Display and wiring
+
+![ST7789 wiring diagram](docs/images/wiring-st7789.svg)
+
+The 2.0\" GMT020-02 front-panel display is documented in [docs/pinout.md](docs/pinout.md).
+The v1.4.x firmware for it is released on branch `display-st7789`.
+
+![Web interface](docs/images/web-ui.png)
+
 ## What the instrument actually shows
 
 Not the numbers from the specification, but measured ones. The method is a
