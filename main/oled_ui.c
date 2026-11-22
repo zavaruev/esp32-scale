@@ -106,11 +106,16 @@ static void draw_screen(const scale_snapshot_t *s)
     /* Screen is 128 rows: labels sit in the bottom lines, like the old
      * design where they were drawn at the bottom of the panel. */
     if (grams_now < 1000.0) {
-        /* < 1 kg: weight in milligrams - by analogy with the kg display
-         * where the grams are the secondary line. */
-        snprintf(buf, sizeof(buf), "%d", (int)(grams_now * 1000.0 + 0.5));
+        /* < 1 kg: 4 lines, exactly like the kg display:
+         *   big mg value, "mg" label, big grams value, "g" label */
+        int mg = (int)(grams_now * 1000.0 + 0.5);
+        int rem = (int)(grams_now + 0.5);
+        snprintf(buf, sizeof(buf), "%d", mg);
         draw_big_auto(2, buf);
         draw_small(26, "mg");
+        snprintf(buf, sizeof(buf), "%d", rem);
+        draw_big(38, buf);
+        draw_small(62, "g");
     } else {
         /* >= 1 kg: big kg value, small "kg" label under it, big grams
          * value, small "g" label under it - labels follow their digits. */
