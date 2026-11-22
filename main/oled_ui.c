@@ -93,14 +93,24 @@ static void draw_screen(const scale_snapshot_t *s)
         oled_big_text((OLED_WIDTH - w) / 2, y, txt, true);
         return 0;
     }
+    /* Big value that fits the 64 px width: scale 3 for up to 3 digits,
+     * 2 for up to 5, 1 beyond - used for the milligram value. */
+    int draw_big_auto(int y, const char *txt)
+    {
+        int n = (int)strlen(txt);
+        int s = (n <= 3) ? 3 : (n <= 5) ? 2 : 1;
+        oled_big_text_s((OLED_WIDTH - n * 6 * s) / 2, y, txt, s);
+        return 0;
+    }
 
     /* Screen is 128 rows: labels sit in the bottom lines, like the old
      * design where they were drawn at the bottom of the panel. */
     if (grams_now < 1000.0) {
-        /* < 1 kg: big value, small "g" label right under it. */
-        snprintf(buf, sizeof(buf), "%d", (int)(grams_now + 0.5));
-        draw_big(2, buf);
-        draw_small(26, "g");
+        /* < 1 kg: weight in milligrams - by analogy with the kg display
+         * where the grams are the secondary line. */
+        snprintf(buf, sizeof(buf), "%d", (int)(grams_now * 1000.0 + 0.5));
+        draw_big_auto(2, buf);
+        draw_small(26, "mg");
     } else {
         /* >= 1 kg: big kg value, small "kg" label under it, big grams
          * value, small "g" label under it - labels follow their digits. */

@@ -438,7 +438,10 @@ static void wifi_start(void)
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
+    esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
+    /* Host name the router shows for the scale: DHCP reservation in the
+     * router ties the address to this name. Set before the STA starts. */
+    ESP_ERROR_CHECK(esp_netif_set_hostname(sta_netif, "esp32-scale"));
     /* The AP netif is created up front. Doing it later, while the STA netif is
      * live, races and faults. */
     esp_netif_create_default_wifi_ap();

@@ -206,6 +206,13 @@ idf.py -p "$PORT" -b 460800 flash
 
 Success: `wifi:security: WPA2-PSK-SHA256, rssi: -69, pmf:1`, address `192.168.22.123`.
 
+**Host name (DHCP): `esp32-scale`** — set by `esp_netif_set_hostname(sta_netif,
+"esp32-scale")` in `wifi_start()` (main/web_server.c). The new image was pushed
+over the air (`tools/ota_push.py`, slot 1, v1.3.1-dirty, 2026-11-22) because the
+serial cable is not present right now (the CH9102 is not enumerated in `lsusb`).
+The router shows the name in the DHCP lease table; `getent hosts esp32-scale`
+does not resolve from the host — the name is the DHCP lease name.
+
 **If WiFi stopped connecting after a series of flashes — do `erase_flash`
 first, rather than changing the password and the parameters.**
 
@@ -992,3 +999,20 @@ We verify the maths offline on `logs/v2_*.log` before the UI appears.
 4. **NVS** via Preferences, `magic_key` = 0xAA55BEEF, check `cal_factor == 0`.
 5. **Calibration master**, 2 points, entry by holding CAL > 3 s. The defaults are
    filled in from measurements: `tare_offset` 418 815, `cal_factor` 425.2.
+
+
+## MCP server for agents (2026-11-22)
+
+`tools/scale_mcp.py` — stdio MCP server, registered in the project config
+(`opencode.jsonc`, section `mcp.servers.scale`). OpenCode agents see the scale's
+HTTP API as tools (normalized names `scale_*`):
+
+- `scale_get_weight` — current reading: `value`/`grams`, `sigma_mg` (noise),
+  `stable`/`zero`/`tare` flags, calibration constants (`cal`, `tare_offset`),
+  uptime. Fresh on each call.
+- `scale_tare` — take a tare on the empty platform.
+- `scale_set_unit` — switch the unit: 0=g, 1=kg, 2=oz.
+
+Each call pulls from the device (`GET/POST /api/*`); the address is
+`http://192.168.22.123`, override with the `SCALE_URL` env variable. The MCP
+tools exist only while the scale is reachable over WiFi.

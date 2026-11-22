@@ -31,6 +31,8 @@ int  oled_text(int x, int y, const char *str, bool on);
 int  oled_text_bold(int x, int y, const char *str);
 /* Large digits: 5x7, scale 3x = 15x21 px, pitch 18. */
 int  oled_big_text(int x, int y, const char *str, bool on);
+/* То же, но с масштабом s (1-3): для длинных строк (миллиграммы). */
+int  oled_big_text_s(int x, int y, const char *str, int s);
 /* 7-segment digits 11x21, pitch 13 — compact and always fit. */
 int  oled_7seg(int x, int y, const char *str, bool on);
 esp_err_t oled_flush(void);

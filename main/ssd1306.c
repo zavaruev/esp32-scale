@@ -61,6 +61,8 @@ static const uint8_t font5x7[][6] = {
      * right (rows 4-6) - visibly different from 'p', whose bowl sits on a
      * full-height left stem. bit0 of each column value is the top row. */
     {'g',0x06,0x09,0x49,0x29,0x16},
+    /* Lowercase 'm': two stems with a small arch between. */
+    {'m',0x7F,0x03,0x04,0x02,0x7F},
     {'k',0x7F,0x08,0x14,0x22,0x41},
     {'o',0x00,0x3C,0x42,0x42,0x3C},
     {'z',0x00,0x62,0x52,0x4A,0x46},
@@ -122,6 +124,22 @@ int oled_text_bold(int x, int y, const char *str)
                     oled_pixel(cx + col,     y + row + 1, true);
                 }
         cx += 7;
+    }
+    return cx;
+}
+
+/* Большой текст с масштабом s (см. oled_big_text; 3 — как обычно). */
+int oled_big_text_s(int x, int y, const char *str, int s)
+{
+    int cx = x;
+    for (const char *p = str; *p; p++) {
+        const uint8_t *g = glyph((uint8_t)*p);
+        if (!g) { cx += 6 * s; continue; }
+        for (int col = 0; col < 5; col++)
+            for (int row = 0; row < 7; row++)
+                if (g[col] & (1 << row))
+                    oled_fill_rect(cx + col * s, y + row * s, s, s, true);
+        cx += 6 * s;
     }
     return cx;
 }
