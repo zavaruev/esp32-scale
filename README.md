@@ -6,10 +6,15 @@ converter, custom firmware on ESP-IDF and a web interface.
 Nothing here comes from ESPHome, Arduino or any off-the-shelf measurement
 library — ESP-IDF and the code in this repository only.
 
-**Current release: [v1.4.3](../../releases/tag/v1.4.3)** — ST7789 panel, AUTO/oz
-units in the web interface, device-side MCP, and idle zero autosave. `main`
-tracks this release. The flashed image reports `v1.4.3-auto-units` in
-`GET /api/ota`; `version.txt` supplies that string at build time.
+**Current release: [v1.4.3](https://github.com/zavaruev/esp32-scale/releases/tag/v1.4.3)** — ST7789 panel, AUTO/oz units in the web interface, device-side MCP, and idle zero autosave. `main` tracks this release; the older SSD1306 OLED variant remains on the `display-oled` branch. The flashed image reports `v1.4.3-auto-units` in `GET /api/ota`; `version.txt` supplies that string at build time.
+
+## Display and wiring
+
+![ST7789 wiring diagram](docs/images/wiring-st7789.svg)
+
+The 2.0" GMT020-02 front-panel display is documented in [docs/pinout.md](docs/pinout.md).
+
+![Web interface](docs/images/web-ui.png)
 
 ## What the instrument actually shows
 
@@ -271,6 +276,28 @@ posture as the rest of the interface, which also allows tare and calibration
 without a password. It is a deliberate choice for a device on a home network,
 and it is worth revisiting if the instrument ever goes onto a network that is not
 yours.
+
+## Front-panel buttons
+
+The six membrane keys on the front panel are scanned by a task on core 1; they
+never touch the HX711 bus. Short presses do the following:
+
+| Key | Action |
+|---|---|
+| `ЕД` | Switch between automatic units and ounces. AUTO shows grams below 1 kg and kilograms at/above 1 kg |
+| `СУМ` | Open the calibration screen; **hold for 1.5 s** to start calibration |
+| `0` | Zero the current reading |
+| `Т` | Take a tare; **hold for 1.5 s** to toggle auto-zero (AZT) |
+| `ИТТ` | Hold / release the displayed result |
+| `СБР` | Release hold and return to the weighing screen |
+
+With an empty, stable platform the display goes to an idle clock after 60 s:
+large `ЧЧ:ММ` plus the date. Time is taken from NTP (`pool.ntp.org`, MSK / UTC+3);
+until it is synced the clock shows `--:--`. Any key press, or a load appearing on
+the platform, returns to the weighing screen.
+
+The same ribbon carries the display wiring. See `docs/pinout.md` for the
+ST7789 (GPIO 2/4/5/10/11/12) and OLED variants.
 
 ## Serial console
 
