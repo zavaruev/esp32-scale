@@ -19,6 +19,26 @@ python tools/analyze_stage1.py logs/run.log --cal-factor 425.2
 Details of the measurements and a write-up of the gotchas — `docs/stage1-findings.md`.
 The chip's datasheet is right next to it: `docs/hx711_english.pdf`.
 
+## Current release and OTA safety
+
+`main` tracks the firmware that is actually on the device:
+**v1.4.3-auto-units**, built from the ST7789 source. `version.txt` holds the
+string reported by `GET /api/ota`. The older OLED source lives on the
+`display-oled` branch; the two display stacks are not interchangeable.
+
+**Before every OTA, read `run_ver`:**
+```bash
+curl -s http://192.168.22.123/api/ota
+```
+An OLED image flashed onto ST7789 hardware makes `ssd1306_init()` fail, the
+device drops off the network and the screen goes dark; `ota_init()` had already
+accepted the image, so rebooting will not revert it. Build from the worktree
+whose version matches `run_ver`, then push with `tools/ota_push.py`.
+
+The host has no `idf.py`/`python3`/`git`. Build inside a container from
+`esp-idf-6.0.1-local:latest` with the source mounted at `/project` and use the
+`idf` wrapper: `node /mnt/media/docker-compose/opencode/.home/dexec.js <container> idf build`.
+
 ## HX711 pinout
 
 DT → GPIO16, SCK → GPIO17, VCC → **3V3**, GND → GND.

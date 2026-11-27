@@ -6,6 +6,11 @@ converter, custom firmware on ESP-IDF and a web interface.
 Nothing here comes from ESPHome, Arduino or any off-the-shelf measurement
 library — ESP-IDF and the code in this repository only.
 
+**Current release: [v1.4.3](../../releases/tag/v1.4.3)** — ST7789 panel, AUTO/oz
+units in the web interface, device-side MCP, and idle zero autosave. `main`
+tracks this release. The flashed image reports `v1.4.3-auto-units` in
+`GET /api/ota`; `version.txt` supplies that string at build time.
+
 ## What the instrument actually shows
 
 Not the numbers from the specification, but measured ones. The method is a
@@ -126,6 +131,11 @@ the moment of writing `http://192.168.22.123/`.
   is kept in `localStorage`, so it belongs to the browser and to this origin: a
   different DHCP lease on the instrument loses it and the page falls back to the
   system preference.
+- **Units** offers exactly the two modes the front panel has: **AUTO** and
+  **oz**. AUTO reads grams below 1 kg and kilograms above it, switching at the
+  boundary from the same averaged reading the panel uses. The active button is
+  taken from `unit_mode` in `/api/weight`, not from the effective display
+  unit — so AUTO stays highlighted while the figure changes from g to kg.
 - **Firmware** and **Diagnostics** are collapsed by default, so the whole page
   fits a phone screen without scrolling.
 
@@ -169,14 +179,16 @@ Everything new runs on **Core 1**; Core 0 remains the sole owner of the HX711.
 The buzzer draws only a few mA directly from a GPIO, so it does not disturb the
 measurement supply.
 
-### Display behaviour in v1.4.0
+### Display behaviour in v1.4.x
 
 ![ST7789 wiring diagram](docs/images/wiring-st7789.svg)
 
 * **Units.** `ED` toggles between AUTO and ounces. AUTO shows grams with two
   decimals below 1 kg and kilograms with three decimals at or above 1 kg. The
   web page and the panel use the same averaged reading for that decision, so
-  they cannot disagree at the boundary.
+  they cannot disagree at the boundary. Since v1.4.3 the page exposes the same
+  two modes (AUTO / oz) and highlights the selected one; older firmware served
+  a stale g/kg/oz page that mistook the effective unit for the selected mode.
 * **Buttons.** `SUM` starts calibration (short or long), `ITT` holds/releases
   the result, `SBR` clears the hold, `T` takes a tare (long press toggles AZT),
   `0` zeroes the reading.
@@ -220,6 +232,17 @@ survive the whole run of bad luck in one stretch. Instead the client asks the
 device how much has landed and continues from there, so a dropout costs one
 chunk. Measured: 993 168 bytes in about two minutes at 3–8 KB/s, over the same
 link the web page itself struggles with.
+
+**Check `run_ver` before every OTA.** The OLED and ST7789 images look equally
+valid to the bootloader. Flashing the OLED image onto ST7789 hardware takes the
+device off the network and darkens the screen, and `ota_init()` confirms the
+wrong image before display init, so a reboot will not revert it. Read
+`GET /api/ota`, map the version to the right worktree, and only then build:
+
+```bash
+curl -s http://192.168.22.123/api/ota     # run_ver
+python3 tools/ota_push.py build/esp32_scale.bin
+```
 
 The device does not trust the client. It refuses an image larger than the slot,
 a chunk that would run past the declared size, a transfer that ends short, and
@@ -284,7 +307,7 @@ python3 tools/serial_console.py --send 'R' --seconds 50
 | `GET /` | the page |
 | `GET /api/weight` | current reading |
 | `POST /api/tare` | tare |
-| `POST /api/unit?u=0\|1\|2` | units: 0 = g, 1 = kg, 2 = oz |
+| `POST /api/unit?u=0\|1\|2\|3` | units: 0 = g, 1 = kg, 2 = oz, 3 = AUTO |
 | `POST /api/azt?off` | switch auto-zero off; no parameter switches it on |
 | `POST /api/cal/start[?mass=g]` | calibration wizard |
 | `GET /api/cal` | calibration progress |
@@ -300,7 +323,25 @@ None of these require authentication. See the note under *Updating the firmware*
 `/api/weight` returns `value`, `grams`, `counts`, `sigma_mg` (noise of a single
 sample), plus `avg_grams`, `avg_sigma_mg` and `avg_n` — the device-side mean and
 its standard error. **Look at `avg_sigma_mg`: it states outright how far the
-figure can be trusted.**
+figure can be trusted.** `unit` is the effective display unit (AUTO resolves
+to `g` or `kg` at 1 kg); `unit_mode` is the selected mode: `2` = oz and
+`3` = AUTO. Legacy `0`/`1` values stored before v1.4 are migrated to AUTO at
+boot.
+
+## Device-side MCP
+
+No host-side MCP server is needed: any MCP client can stream JSON-RPC 2.0 to
+`POST http://192.168.22.123/mcp`. The endpoint is registered by
+`main/mcp_server.c` in `web_server_start()`. Tools:
+
+| Tool | Action |
+|---|---|
+| `get_weight` | fresh reading, noise, flags, calibration and uptime |
+| `tare` | tare on an empty platform |
+| `set_unit` | `unit`: 0 = g, 1 = kg, 2 = oz, 3 = AUTO |
+
+`initialize` reports the device name `esp32-scale`; notifications (no `id`)
+get a 202 and no body.
 
 ## Code layout
 
@@ -310,7 +351,9 @@ figure can be trusted.**
 | `main/scale_filter.c` | median(5) → adaptive EMA → auto-zero → deadband |
 | `main/weight_task.c` | measurement task on **Core 0**, NVS, progressive mean |
 | `main/ota.c` | writing an image into the slot that is not running |
-| `main/web_server.c` | WiFi and HTTP on **Core 1** |
+| `main/web_server.c` | WiFi, HTTP and MCP on **Core 1** |
+| `main/mcp_server.c` | JSON-RPC tools: `get_weight`, `tare`, `set_unit` |
+| `main/idle_tare.{c,h}` | periodic idle-zero autosave decision, host-testable |
 | `main/scale_app.c` | initialisation and the serial console |
 | `main/web/index.html` | interface source, readable and commented |
 | `main/st7789.{c,h}` | SPI2 + esp_lcd ST7789 driver, backlight |
