@@ -12,6 +12,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "hx711.h"
+#include "idle_tare.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -24,6 +25,7 @@ static const char *TAG = "weight";
 #define NVS_KEY_CAL "cal_factor"
 #define NVS_KEY_TARE "tare_offset"
 #define NVS_KEY_UNIT "unit"
+#define NVS_KEY_REF_MASS "ref_mass"   /* reference weight for panel calibration */
 /* ~4.5 s of warm-up before the boot tare is taken. */
 #define BOOT_TARE_SETTLE_SAMPLES 51
 /* How far the platform may sit from the confirmed tare and still count as
@@ -32,10 +34,20 @@ static const char *TAG = "weight";
  * never mistaken for a load, and every real reference is. */
 #define BOOT_TARE_TOLERANCE_COUNTS 851
 
+/* Idle zero autosave. The rest point walks ~2 g/hour; refreshing the stored
+ * tare every 30 min keeps it inside the 2 g boot-tare tolerance. One write
+ * every 30 min is negligible for NVS wear. */
+#define IDLE_TARE_SAVE_US 1800000000LL
+
 /* What NVS held at start-up, kept so the boot tare can tell an empty platform
  * from a loaded one. */
 static int32_t nvs_tare_counts;
 static bool have_nvs_tare;
+
+/* Mass of the reference used by the one-touch calibration on the front panel.
+ * Set once from the web interface or the `F` console command; 73.03 g is the
+ * reference already used for the paired measurements in AGENTS.md. */
+static float ref_mass = 73.03f;
 
 #define NVS_MAGIC   0xAA55BEEF
 #define NVS_KEY_MAGIC "magic"
@@ -109,6 +121,13 @@ static bool nvs_load(scale_filter_t *f)
     nvs_get_i32(h, NVS_KEY_TARE, &tare);
     nvs_get_u8(h, NVS_KEY_UNIT, &unit);
 
+    size_t ref_len = sizeof(ref_mass);
+    float stored_ref = 0.0f;
+    if (nvs_get_blob(h, NVS_KEY_REF_MASS, &stored_ref, &ref_len) == ESP_OK &&
+        ref_len == sizeof(stored_ref) && stored_ref > 0.0f) {
+        ref_mass = stored_ref;
+    }
+
     /* Read the calibration back the way it was written.
      *
      * nvs_save stores cal_factor with nvs_set_blob, because it is a float and the
@@ -153,7 +172,8 @@ static bool nvs_load(scale_filter_t *f)
      * counts - value*cal_factor: it must land on the stored tare. */
     f->azt_anchor = (double)tare;
     f->azt_since_us = 0;
-    f->unit = (scale_unit_t)(unit % 3);
+    /* Legacy NVS values 0/1 (g/kg) become AUTO; 2 stays ounces. */
+    f->unit = (unit == 2) ? UNIT_OUNCE : UNIT_AUTO;
     /* Kept so the boot tare can tell an empty platform from a loaded one. See
      * the block in the measurement task. */
     nvs_tare_counts = tare;
@@ -176,6 +196,7 @@ static esp_err_t nvs_save(const scale_filter_t *f)
     nvs_set_blob(h, NVS_KEY_CAL, &cal, sizeof(cal));
     nvs_set_i32(h, NVS_KEY_TARE, f->tare_offset);
     nvs_set_u8(h, NVS_KEY_UNIT, (uint8_t)f->unit);
+    nvs_set_blob(h, NVS_KEY_REF_MASS, &ref_mass, sizeof(ref_mass));
     nvs_set_u32(h, NVS_KEY_MAGIC, NVS_MAGIC);
     err = nvs_commit(h);
     nvs_close(h);
@@ -194,6 +215,7 @@ static uint32_t raw_seq;
 static uint32_t read_failures;
 static uint32_t total_read_failures;
 static int64_t last_wait_us;
+static idle_tare_t idle_tare = { .period_us = IDLE_TARE_SAVE_US };
 
 static void measure_task(void *arg)
 {
@@ -355,7 +377,15 @@ static void measure_task(void *arg)
                                             filter.cal_factor * 1000.0);
 
             snapshot.grams = r.grams;
-            snapshot.display_value = (float)scale_convert_units(&filter, r.grams);
+            if (filter.unit == UNIT_AUTO) {
+                snapshot.effective_unit = (fabsf(snapshot.avg_grams) >= 1000.0f)
+                                          ? UNIT_KILOGRAM : UNIT_GRAM;
+                snapshot.display_value =
+                    (float)scale_convert_units(&filter, snapshot.avg_grams);
+            } else {
+                snapshot.effective_unit = filter.unit;
+                snapshot.display_value = (float)scale_convert_units(&filter, r.grams);
+            }
             snapshot.sigma_mg = sigma_est / filter.cal_factor * 1000.0f;
             snapshot.stable = r.stable;
             snapshot.zero = r.zero;
@@ -368,6 +398,27 @@ static void measure_task(void *arg)
             snapshot.uptime_s = (uint32_t)(now / 1000000);
             snapshot.sample_seq++;
             snapshot.updated = true;
+
+            /* Follow the platform's rest point while the scale is idle. AZT
+             * holds the display at zero in RAM, but the value in NVS would
+             * otherwise stay at the last manual tare; after a few hours of
+             * drift the boot tare refuses it (2 g tolerance) and the empty
+             * platform reads as a load. Save only when the instrument itself
+             * says zero - a real load must never be swallowed silently. */
+            if (idle_tare_due(&idle_tare, now,
+                              filter.ema_valid && snapshot.stable,
+                              snapshot.zero)) {
+                int32_t idle_counts = (int32_t)llround(filter.ema);
+                if (idle_counts != filter.tare_offset) {
+                    int32_t old_tare = filter.tare_offset;
+                    /* Not scale_filter_tare(): that would light the TARE
+                     * indicator. Only the stored reference moves. */
+                    filter.tare_offset = idle_counts;
+                    nvs_save(&filter);
+                    ESP_LOGI(TAG, "idle tare saved: %ld counts (was %ld)",
+                             (long)idle_counts, (long)old_tare);
+                }
+            }
 
             rawlog[rawlog_idx].seq = ++raw_seq;
             rawlog[rawlog_idx].t_us = now_read;
@@ -660,7 +711,9 @@ esp_err_t weight_task_cal_start(double mass_hint)
     cal_running = true;
     memset(&cal_state, 0, sizeof(cal_state));
     cal_mass_hint = mass_hint;
-    BaseType_t ok = xTaskCreate(cal_task, "cal", 4096, NULL, 4, NULL);
+    /* Pin the wizard to core 1: it only polls the snapshot, and core 0 must stay
+     * the sole owner of the HX711 read window. */
+    BaseType_t ok = xTaskCreatePinnedToCore(cal_task, "cal", 4096, NULL, 4, NULL, 1);
     if (ok != pdPASS) {
         cal_running = false;
         return ESP_ERR_NO_MEM;
@@ -710,4 +763,21 @@ void weight_task_set_azt(bool enabled)
     xSemaphoreTake(lock, portMAX_DELAY);
     filter.azt_enabled = enabled;
     xSemaphoreGive(lock);
+}
+
+float weight_task_get_ref_mass(void)
+{
+    return ref_mass;
+}
+
+esp_err_t weight_task_set_ref_mass(float mass)
+{
+    if (mass <= 0.0f) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    xSemaphoreTake(lock, portMAX_DELAY);
+    ref_mass = mass;
+    esp_err_t err = nvs_save(&filter);
+    xSemaphoreGive(lock);
+    return err;
 }

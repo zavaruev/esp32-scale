@@ -149,6 +149,53 @@ console — it prints the address it was given.
 **There is no access-point fallback at the moment** — it is disabled on
 purpose, by request. The device acts as a station only.
 
+## Front panel, display and buzzer
+
+The front panel drives a 2.0" ST7789 TFT (240×320, mounted sideways so LVGL uses
+320×240), a 6-key matrix and a passive piezo buzzer on GPIO47.
+
+The physical wiring, the button matrix and the core placement are documented in
+**[docs/pinout.md](docs/pinout.md)** — that is the single reference to use when
+soldering. In short: display on GPIO 2/4/5/10/11/12, buttons on 6/7/8/9/13,
+buzzer on GPIO47, HX711 unchanged on 16/17. The button ribbon is a 2x3 matrix:
+row wires on contacts 1 and 5, column wires on contacts 2, 3 and 4.
+
+New console commands: `Z` (read all buttons), `Y 0|1` (backlight), `A <0..7>`
+(play a beep pattern), `F <grams>` (set the reference mass for one-touch
+calibration). Hold `SUM` for 1.5 s to start calibration; the wizard uses the mass
+set by `F` (73.03 g by default).
+
+Everything new runs on **Core 1**; Core 0 remains the sole owner of the HX711.
+The buzzer draws only a few mA directly from a GPIO, so it does not disturb the
+measurement supply.
+
+### Display behaviour in v1.4.0
+
+![ST7789 wiring diagram](docs/images/wiring-st7789.svg)
+
+* **Units.** `ED` toggles between AUTO and ounces. AUTO shows grams with two
+  decimals below 1 kg and kilograms with three decimals at or above 1 kg. The
+  web page and the panel use the same averaged reading for that decision, so
+  they cannot disagree at the boundary.
+* **Buttons.** `SUM` starts calibration (short or long), `ITT` holds/releases
+  the result, `SBR` clears the hold, `T` takes a tare (long press toggles AZT),
+  `0` zeroes the reading.
+* **Overload.** Above 6 kg the number turns amber and `! >6 kg` appears - the
+  reading keeps updating. At 10 kg the display switches to `OVER` / `PANIC` and
+  stops updating. Both thresholds have hysteresis to avoid repeated alarms.
+  These are mechanical warnings: the HX711 still has range up to about 19.7 kg,
+  but the cell is rated for 6 kg.
+* **Idle clock.** After 60 s with an empty, stable platform the panel shows a
+  large `HH:MM` and date. Time comes from NTP (`pool.ntp.org`, MSK/UTC+3); it
+  displays `--:--` until synced. A load of 5 g or more, or any button press,
+  returns immediately to the weighing screen; smaller loads must persist for
+  about 4 s.
+* **Colours.** The panel applies BGR channel order and inversion. The
+  framebuffer colours in `main/ui.c` are pre-distorted so the displayed colours
+  are the intended dark blue, white, blue and green.
+
+![Web interface](docs/images/web-ui.png)
+
 ## Updating the firmware
 
 The device has **two 2 MB application slots**. An update is written to the slot
@@ -266,6 +313,11 @@ figure can be trusted.**
 | `main/web_server.c` | WiFi and HTTP on **Core 1** |
 | `main/scale_app.c` | initialisation and the serial console |
 | `main/web/index.html` | interface source, readable and commented |
+| `main/st7789.{c,h}` | SPI2 + esp_lcd ST7789 driver, backlight |
+| `main/buttons.{c,h}` | 2×4 membrane matrix, debounce, short/long press |
+| `main/ui.{c,h}` | LVGL weighing and calibration screens |
+| `main/audio.{c,h}` | active buzzer beep patterns on GPIO47 |
+| `docs/pinout.md` | complete wiring reference |
 
 The core split is not a style preference but a necessity: **Core 0 does
 measurement only, Core 1 does networking and the interface only.** The

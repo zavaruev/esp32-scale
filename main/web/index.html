@@ -540,9 +540,10 @@ footer{
   <div class="card">
     <div class="label">Units</div>
     <div class="units">
-      <button class="btn btn-ghost" data-code="g"  onclick="setUnit(0)">g</button>
-      <button class="btn btn-ghost" data-code="kg" onclick="setUnit(1)">kg</button>
-      <button class="btn btn-ghost" data-code="oz" onclick="setUnit(2)">oz</button>
+      <!-- The panel's ED key toggles only AUTO and ounces; offer the same two
+           modes here. AUTO shows g below 1 kg and kg above it. -->
+      <button class="btn btn-ghost" data-mode="3" onclick="setUnit(3)">AUTO</button>
+      <button class="btn btn-ghost" data-mode="2" onclick="setUnit(2)">oz</button>
     </div>
   </div>
 </div>
@@ -618,13 +619,16 @@ var step = 0.05;
 /* per = how many grams make one unit, so the displayed figure is grams / per.
    The average is kept in grams regardless of what is selected: averaging mixed
    scales inside one window would be meaningless. */
+/* These are the EFFECTIVE units the API reports, not the modes the operator
+ * selects: AUTO resolves to g or kg depending on the reading. Kept for the
+ * conversion of the displayed figure; the buttons below use unit_mode. */
 var UNITS = [
   {code: 'g',  label: 'g',  per: 1,            decimals: 2},
   {code: 'kg', label: 'kg', per: 1000,         decimals: 3},
   {code: 'oz', label: 'oz', per: 28.349523125, decimals: 3}
 ];
 
-var lastUnit = null;
+var lastUnitMode = null;
 var calTimer = null;
 var calPhase = 'idle';
 
@@ -831,12 +835,16 @@ function paint(s) {
       ? 'On: the zero follows the platform as it drifts'
       : 'Off: the zero stays where the tare left it';
 
-  if (s.unit !== lastUnit) {
-    lastUnit = s.unit;
+  /* Highlight the selected MODE, not the effective display unit. s.unit is
+   * "g"/"kg" even in AUTO (below/above 1 kg), which made the page claim a
+   * manual unit was selected while the device was actually in AUTO. */
+  var mode = (s.unit_mode === undefined) ? 3 : s.unit_mode;
+  if (mode !== lastUnitMode) {
+    lastUnitMode = mode;
     resetAverage();
     var btns = document.querySelectorAll('.units .btn');
     for (var i = 0; i < btns.length; i++) {
-      var on = btns[i].getAttribute('data-code') === s.unit;
+      var on = btns[i].getAttribute('data-mode') === String(mode);
       btns[i].classList.toggle('btn-primary', on);
       btns[i].classList.toggle('btn-ghost', !on);
     }

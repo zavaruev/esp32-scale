@@ -5,6 +5,8 @@
 
 /* Brings up WiFi STA and the HTTP server. Returns immediately; the connection
  * runs in the background and retries on its own. */
+void web_weight_json(char *buf, size_t cap);
+
 esp_err_t net_start(void);
 
 /* Scans and prints nearby APs with their auth mode. The host has no WiFi radio, so
@@ -54,5 +56,9 @@ void wifi_set_mac(const char *txt);
 /* Overrides the password at runtime; pass NULL to restore the built-in one. */
 void wifi_set_password(const char *pw);
 int wifi_get_auth_mode(void);
+
+int16_t wifi_get_rssi(void);
+
+void ntp_start(void);
 
 #endif /* WEB_SERVER_H */

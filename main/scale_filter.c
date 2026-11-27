@@ -258,6 +258,8 @@ int32_t scale_filter_get_tare(const scale_filter_t *f)
 double scale_convert_units(const scale_filter_t *f, float grams)
 {
     switch (f->unit) {
+    case UNIT_AUTO:
+        return (grams >= 1000.0f || grams <= -1000.0f) ? grams / 1000.0 : grams;
     case UNIT_KILOGRAM:
         return grams / 1000.0;
     case UNIT_OUNCE:
