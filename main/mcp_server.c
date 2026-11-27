@@ -495,7 +495,7 @@ static size_t mcp_tools_call(char *out, size_t cap, size_t pos,
         }
         return wr(out, cap, pos,
                   ",\"result\":{\"content\":[{\"type\":\"text\","
-                  "\"text\":\"unit must be 0 (g), 1 (kg) or 2 (oz)\"}],"
+                  "\"text\":\"unit must be 0 (g), 1 (kg), 2 (oz) or 3 (auto)\"}],"
                   "\"isError\":true}");
     }
 

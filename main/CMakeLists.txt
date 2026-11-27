@@ -26,6 +26,7 @@ endif()
 idf_component_register(
     SRCS "scale_app.c"
          "scale_filter.c"
+         "idle_tare.c"
          "weight_task.c"
          "web_server.c"
          "ota.c"

@@ -536,14 +536,20 @@ void web_weight_json(char *buf, size_t cap)
         break;
     }
 
+    /* `unit` is the EFFECTIVE display unit (AUTO resolves to g or kg), while
+     * `unit_mode` is the mode the operator actually selected: 0=g, 1=kg,
+     * 2=oz, 3=AUTO. The web page used to highlight its g/kg/oz buttons from
+     * the effective unit, so AUTO looked like a manual g or kg selection and
+     * there was no way to select AUTO from the page at all. */
     snprintf(buf, cap,
-             "{\"value\":%.4f,\"unit\":\"%s\",\"decimals\":%d,"
+             "{\"value\":%.4f,\"unit\":\"%s\",\"unit_mode\":%d,\"decimals\":%d,"
              "\"grams\":%.2f,\"stable\":%s,\"zero\":%s,\"tare\":%s,"
              "\"counts\":%ld,\"sigma_mg\":%.1f,\"cal\":%.2f,"
              "\"tare_offset\":%ld,\"uptime\":%lu,\"azt\":%s,"
              "\"avg_grams\":%.3f,\"avg_sigma_mg\":%.1f,\"avg_n\":%u,"
              "\"heap_free\":%lu,\"heap_min\":%lu}",
-             (double)s.display_value, unit, decimals, (double)s.grams,
+             (double)s.display_value, unit, (int)s.unit, decimals,
+             (double)s.grams,
              s.stable ? "true" : "false", s.zero ? "true" : "false",
              s.tare_active ? "true" : "false", (long)s.counts,
              (double)s.sigma_mg, (double)s.cal_factor,

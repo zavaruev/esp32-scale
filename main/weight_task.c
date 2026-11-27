@@ -12,6 +12,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "hx711.h"
+#include "idle_tare.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -32,6 +33,11 @@ static const char *TAG = "weight";
  * peak to peak, so this is about eight times the noise: an empty platform is
  * never mistaken for a load, and every real reference is. */
 #define BOOT_TARE_TOLERANCE_COUNTS 851
+
+/* Idle zero autosave. The rest point walks ~2 g/hour; refreshing the stored
+ * tare every 30 min keeps it inside the 2 g boot-tare tolerance. One write
+ * every 30 min is negligible for NVS wear. */
+#define IDLE_TARE_SAVE_US 1800000000LL
 
 /* What NVS held at start-up, kept so the boot tare can tell an empty platform
  * from a loaded one. */
@@ -209,6 +215,7 @@ static uint32_t raw_seq;
 static uint32_t read_failures;
 static uint32_t total_read_failures;
 static int64_t last_wait_us;
+static idle_tare_t idle_tare = { .period_us = IDLE_TARE_SAVE_US };
 
 static void measure_task(void *arg)
 {
@@ -391,6 +398,27 @@ static void measure_task(void *arg)
             snapshot.uptime_s = (uint32_t)(now / 1000000);
             snapshot.sample_seq++;
             snapshot.updated = true;
+
+            /* Follow the platform's rest point while the scale is idle. AZT
+             * holds the display at zero in RAM, but the value in NVS would
+             * otherwise stay at the last manual tare; after a few hours of
+             * drift the boot tare refuses it (2 g tolerance) and the empty
+             * platform reads as a load. Save only when the instrument itself
+             * says zero - a real load must never be swallowed silently. */
+            if (idle_tare_due(&idle_tare, now,
+                              filter.ema_valid && snapshot.stable,
+                              snapshot.zero)) {
+                int32_t idle_counts = (int32_t)llround(filter.ema);
+                if (idle_counts != filter.tare_offset) {
+                    int32_t old_tare = filter.tare_offset;
+                    /* Not scale_filter_tare(): that would light the TARE
+                     * indicator. Only the stored reference moves. */
+                    filter.tare_offset = idle_counts;
+                    nvs_save(&filter);
+                    ESP_LOGI(TAG, "idle tare saved: %ld counts (was %ld)",
+                             (long)idle_counts, (long)old_tare);
+                }
+            }
 
             rawlog[rawlog_idx].seq = ++raw_seq;
             rawlog[rawlog_idx].t_us = now_read;
